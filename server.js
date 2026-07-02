@@ -24,6 +24,7 @@ if (!JWT_SECRET || !ADMIN_USERNAME || !ADMIN_PASSWORD) {
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static('.'));
 
 // --- MIDDLEWARE DE AUTENTICACIÓN ADMIN ---
 function requireAdmin(req, res, next) {
