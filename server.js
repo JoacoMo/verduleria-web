@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
 
@@ -24,7 +25,15 @@ if (!JWT_SECRET || !ADMIN_USERNAME || !ADMIN_PASSWORD) {
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static('.'));
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get(/^(?!\/api).*/, (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // --- MIDDLEWARE DE AUTENTICACIÓN ADMIN ---
 function requireAdmin(req, res, next) {
