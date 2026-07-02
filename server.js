@@ -3,19 +3,10 @@ const cors = require('cors');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
-const { ensureDefaultCatalog } = require('./prisma/catalog');
 
 const prisma = new PrismaClient();
 const app = express();
 const APP_VERSION = process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local';
-const SALE_UNIT_VALUES = new Set(['kg', 'unit', 'bunch', 'tray', 'bag']);
-const SALE_UNIT_LABELS = {
-    kg: 'kg',
-    unit: 'unidad',
-    bunch: 'atado',
-    tray: 'bandeja',
-    bag: 'bolsa',
-};
 
 // --- CONFIG ---
 const PORT = process.env.PORT || 3000;
@@ -115,14 +106,13 @@ app.post('/api/admin/login', (req, res) => {
 
 app.post('/api/admin/products', requireAdmin, async (req, res) => {
     try {
-        const { name, price, image, stock, saleUnit } = req.body;
+        const { name, price, image, stock } = req.body;
         const product = await prisma.product.create({
             data: {
                 name,
                 price: parseFloat(price),
                 image,
-                stock: Number.parseFloat(stock) || 0,
-                saleUnit: SALE_UNIT_VALUES.has(saleUnit) ? saleUnit : 'unit',
+                stock: parseInt(stock) || 0,
             },
         });
         res.status(201).json(product);
@@ -135,13 +125,12 @@ app.post('/api/admin/products', requireAdmin, async (req, res) => {
 app.put('/api/admin/products/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     try {
-        const { name, price, image, stock, saleUnit } = req.body;
+        const { name, price, image, stock } = req.body;
         const data = {};
         if (name !== undefined) data.name = name;
         if (price !== undefined) data.price = parseFloat(price);
         if (image !== undefined && image !== '') data.image = image;
-        if (stock !== undefined) data.stock = Number.parseFloat(stock);
-        if (saleUnit !== undefined && SALE_UNIT_VALUES.has(saleUnit)) data.saleUnit = saleUnit;
+        if (stock !== undefined) data.stock = parseInt(stock);
 
         const product = await prisma.product.update({
             where: { id: parseInt(id) },
@@ -191,26 +180,9 @@ app.put('/api/admin/orders/:id/confirm', requireAdmin, async (req, res) => {
 
         await prisma.$transaction(async (tx) => {
             for (const item of order.items) {
-                const product = await tx.product.findUnique({ where: { id: item.id } });
-                if (!product) {
-                    const error = new Error(`El producto ${item.name} ya no existe.`);
-                    error.code = 'PRODUCT_NOT_FOUND';
-                    throw error;
-                }
-
-                const packSize = product.saleUnit === 'kg' ? Number(item.packSize || 1) : 1;
-                const quantity = Number(item.quantity || 1);
-                const requestedStock = quantity * packSize;
-
-                if (product.stock + 1e-9 < requestedStock) {
-                    const error = new Error(`Stock insuficiente para ${product.name}.`);
-                    error.code = 'INSUFFICIENT_STOCK';
-                    throw error;
-                }
-
                 await tx.product.update({
-                    where: { id: product.id },
-                    data: { stock: { decrement: requestedStock } },
+                    where: { id: item.id },
+                    data: { stock: { decrement: item.quantity } },
                 });
             }
             await tx.order.update({ where: { id: orderId }, data: { status: 'paid' } });
@@ -219,9 +191,6 @@ app.put('/api/admin/orders/:id/confirm', requireAdmin, async (req, res) => {
         res.json({ message: 'Pedido confirmado y stock actualizado.' });
     } catch (error) {
         console.error('Error al confirmar pedido:', error);
-        if (error.code === 'INSUFFICIENT_STOCK' || error.code === 'PRODUCT_NOT_FOUND') {
-            return res.status(409).json({ error: error.message });
-        }
         res.status(500).json({ error: 'No se pudo confirmar el pedido.' });
     }
 });
@@ -264,11 +233,7 @@ app.post('/api/checkout', async (req, res) => {
         for (const cartItem of cart) {
             const product = dbProducts.find((p) => p.id === cartItem.id);
             if (!product) continue;
-            const packSize = product.saleUnit === 'kg' ? (Number(cartItem.packSize) === 0.5 ? 0.5 : 1) : 1;
-            const quantity = Math.max(1, Number.parseInt(cartItem.quantity, 10) || 1);
-            const requestedStock = quantity * packSize;
-
-            if (product.stock + 1e-9 < requestedStock) {
+            if (product.stock < cartItem.quantity) {
                 sinStock.push(product.name);
                 continue;
             }
@@ -276,11 +241,9 @@ app.post('/api/checkout', async (req, res) => {
                 id: product.id,
                 name: product.name,
                 price: product.price,
-                quantity,
-                packSize,
-                saleUnit: product.saleUnit,
+                quantity: cartItem.quantity,
             });
-            total += product.price * requestedStock;
+            total += product.price * cartItem.quantity;
         }
 
         if (sinStock.length > 0) {
@@ -305,7 +268,6 @@ app.post('/api/checkout', async (req, res) => {
         res.json({
             orderId: order.id,
             total,
-            items: itemsForOrder,
             transferAlias: TRANSFER_ALIAS,
             transferCbu: TRANSFER_CBU,
             whatsappNumber: WHATSAPP_NUMBER,
@@ -325,16 +287,6 @@ app.post('/api/contact', (req, res) => {
 });
 
 // --- INICIO DEL SERVIDOR ---
-async function bootstrap() {
-    try {
-        await ensureDefaultCatalog(prisma);
-    } catch (error) {
-        console.error('No se pudo asegurar el catálogo base:', error);
-    }
-
-    app.listen(PORT, () => {
-        console.log(`Servidor de la verdulería corriendo en el puerto ${PORT}`);
-    });
-}
-
-bootstrap();
+app.listen(PORT, () => {
+    console.log(`Servidor de la verdulería corriendo en el puerto ${PORT}`);
+});

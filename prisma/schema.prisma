@@ -12,8 +12,7 @@ model Product {
   name      String
   price     Float
   image     String
-  stock     Float    @default(0)
-  saleUnit  String   @default("unit")
+  stock     Int      @default(0)
   createdAt DateTime @default(now())
 }
 

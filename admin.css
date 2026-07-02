@@ -50,16 +50,6 @@ h2 {
     font-family: inherit;
 }
 
-.form-group select {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    box-sizing: border-box;
-    font-family: inherit;
-    background: white;
-}
-
 .form-buttons {
     display: flex;
     gap: 10px;
