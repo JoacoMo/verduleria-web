@@ -1,5 +1,12 @@
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('adminToken');
+    const SALE_UNIT_LABELS = {
+        kg: 'kg',
+        unit: 'unidad',
+        bunch: 'atado',
+        tray: 'bandeja',
+        bag: 'bolsa',
+    };
 
     if (!token) {
         window.location.href = 'login.html';
@@ -18,6 +25,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const submitButton = document.getElementById('save-btn');
     const cancelBtn = document.getElementById('cancel-edit-btn');
     const logoutBtn = document.getElementById('logout-btn');
+    const saleUnitSelect = document.getElementById('product-sale-unit');
+    const stockInput = document.getElementById('product-stock');
 
     let editingProductId = null;
 
@@ -35,6 +44,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return true;
         }
         return false;
+    }
+
+    function getSaleUnitLabel(saleUnit) {
+        return SALE_UNIT_LABELS[saleUnit] || saleUnit || 'unidad';
+    }
+
+    function formatStock(stock) {
+        return Number.isInteger(stock) ? stock.toString() : stock.toFixed(1);
     }
 
     // --- PRODUCTOS ---
@@ -55,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <img src="${product.image}" alt="${product.name}" onerror="this.src='https://via.placeholder.com/60'; this.onerror=null;">
                         <div>
                             <strong>${product.name}</strong><br>
-                            $${product.price.toFixed(2)} — Stock: ${product.stock}
+                            $${product.price.toFixed(2)} — Stock: ${formatStock(product.stock)} ${getSaleUnitLabel(product.saleUnit)}
                         </div>
                     </div>
                     <div class="product-item-actions">
@@ -77,8 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const productData = {
             name: document.getElementById('product-name').value,
             price: parseFloat(document.getElementById('product-price').value),
-            stock: parseInt(document.getElementById('product-stock').value),
+            stock: parseFloat(stockInput.value),
             image: document.getElementById('product-image').value,
+            saleUnit: saleUnitSelect.value,
         };
 
         let url = `${API_URL}/admin/products`;
@@ -111,8 +129,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             document.getElementById('product-name').value = product.name;
             document.getElementById('product-price').value = product.price;
-            document.getElementById('product-stock').value = product.stock;
+            stockInput.value = product.stock;
+            stockInput.step = product.saleUnit === 'kg' ? '0.1' : '1';
             document.getElementById('product-image').value = product.image;
+            saleUnitSelect.value = product.saleUnit || 'unit';
 
             editingProductId = productId;
             formTitle.textContent = 'Editar Producto';
@@ -138,6 +158,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function resetForm() {
         productForm.reset();
+        saleUnitSelect.value = 'unit';
+        if (stockInput) stockInput.step = '1';
         editingProductId = null;
         formTitle.textContent = 'Agregar Nuevo Producto';
         submitButton.textContent = 'Guardar Producto';
@@ -161,7 +183,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             orderList.innerHTML = '';
             orders.forEach((order) => {
-                const itemsHtml = order.items.map((i) => `<li>${i.quantity}x ${i.name} — $${(i.price * i.quantity).toFixed(2)}</li>`).join('');
+                const itemsHtml = order.items.map((i) => {
+                    const packSize = i.packSize || 1;
+                    const saleUnit = i.saleUnit || 'unit';
+                    const unitLabel = SALE_UNIT_LABELS[saleUnit] || saleUnit || 'unidad';
+                    const purchaseLabel = saleUnit === 'kg' ? `${packSize} kg` : unitLabel;
+                    const lineTotal = i.price * i.quantity * packSize;
+                    return `<li>${i.quantity} x ${purchaseLabel} ${i.name} — $${lineTotal.toFixed(2)}</li>`;
+                }).join('');
                 const statusKey = order.status;
                 const div = document.createElement('div');
                 div.className = 'order-item';
@@ -232,6 +261,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target.matches('.confirm-order-btn')) handleConfirmOrder(e.target.dataset.id);
             if (e.target.matches('.cancel-order-btn')) handleCancelOrder(e.target.dataset.id);
         });
+    }
+
+    if (saleUnitSelect && stockInput) {
+        saleUnitSelect.addEventListener('change', () => {
+            stockInput.step = saleUnitSelect.value === 'kg' ? '0.1' : '1';
+        });
+        stockInput.step = saleUnitSelect.value === 'kg' ? '0.1' : '1';
     }
 
     if (cancelBtn) cancelBtn.addEventListener('click', resetForm);

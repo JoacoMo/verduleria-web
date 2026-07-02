@@ -29,7 +29,17 @@
                 </div>
                 <div class="form-group">
                     <label for="product-stock">Stock disponible:</label>
-                    <input type="number" id="product-stock" step="1" min="0" required>
+                    <input type="number" id="product-stock" step="0.1" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="product-sale-unit">Unidad de venta:</label>
+                    <select id="product-sale-unit" required>
+                        <option value="kg">Por kilo</option>
+                        <option value="unit">Por unidad</option>
+                        <option value="bunch">Por atado</option>
+                        <option value="tray">Por bandeja</option>
+                        <option value="bag">Por bolsa</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="product-image">URL de la Imagen:</label>
