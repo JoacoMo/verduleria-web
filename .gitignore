@@ -1,0 +1,5 @@
+# Ignorar dependencias de Node, se pueden reinstalar con npm install
+node_modules
+
+# Ignorar variables de entorno, contienen secretos como la contraseña de la BD
+.env

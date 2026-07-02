@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administración - Mi Verdulería</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div class="container">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h1>Panel de Administración</h1>
+            <button id="logout-btn" style="background-color:#7f8c8d; color:white;">Cerrar sesión</button>
+        </div>
+
+        <!-- Formulario para Crear y Actualizar Productos -->
+        <div class="form-container">
+            <h2 id="form-title">Agregar Nuevo Producto</h2>
+            <form id="product-form">
+                <input type="hidden" id="product-id">
+
+                <div class="form-group">
+                    <label for="product-name">Nombre del Producto:</label>
+                    <input type="text" id="product-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="product-price">Precio:</label>
+                    <input type="number" id="product-price" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label for="product-stock">Stock disponible:</label>
+                    <input type="number" id="product-stock" step="1" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="product-image">URL de la Imagen:</label>
+                    <input type="url" id="product-image" required>
+                </div>
+                <div class="form-buttons">
+                    <button type="submit" id="save-btn">Guardar Producto</button>
+                    <button type="button" id="cancel-edit-btn" style="display: none;">Cancelar Edición</button>
+                </div>
+            </form>
+        </div>
+
+        <hr>
+
+        <h2>Productos Existentes</h2>
+        <div id="admin-product-list"></div>
+
+        <hr>
+
+        <h2>Pedidos</h2>
+        <p style="color:#6c7a6a; margin-top:-10px;">Confirmá un pedido recién cuando veas el comprobante de transferencia. Ahí se descuenta el stock.</p>
+        <div id="admin-order-list"></div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="admin-v3.js"></script>
+</body>
+</html>

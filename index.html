@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verdulería Fresca Online</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="hero-text">
+                <h1><i class="fa-solid fa-carrot"></i>Verdulería Fresca</h1>
+                <svg class="hero-underline" viewBox="0 0 260 14" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2 9 C 40 2, 80 13, 120 7 S 200 1, 258 8" stroke="#C98A3E" stroke-width="3" fill="none" stroke-linecap="round"/>
+                </svg>
+                <p class="hero-tagline">Del cajón a tu mesa. Verdura y fruta fresca todos los días, pedís online y retirás o coordinamos la entrega.</p>
+            </div>
+            <div class="cart-icon">
+                <i class="fa-solid fa-cart-shopping"></i>
+                <span id="cart-count">0</span>
+            </div>
+        </div>
+        <svg class="header-edge" viewBox="0 0 1200 26" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M0,0 L0,14 L30,22 L60,10 L90,20 L120,8 L150,18 L180,6 L210,16 L240,4 L270,14 L300,22 L330,10 L360,20 L390,8 L420,18 L450,6 L480,16 L510,4 L540,14 L570,22 L600,10 L630,20 L660,8 L690,18 L720,6 L750,16 L780,4 L810,14 L840,22 L870,10 L900,20 L930,8 L960,18 L990,6 L1020,16 L1050,4 L1080,14 L1110,22 L1140,10 L1170,20 L1200,8 L1200,26 L0,26 Z" fill="#FAF6EC"/>
+        </svg>
+    </header>
+
+    <main class="container">
+        <h2><i class="fa-solid fa-leaf"></i> Nuestros Productos Frescos</h2>
+        <p class="section-subtitle">Cosecha del día, directo del cajón.</p>
+        <div id="product-list" class="product-grid">
+            <!-- Los productos se cargarán aquí con JavaScript -->
+        </div>
+
+        <section class="shopping-cart-section">
+            <h2 style="margin-top:0;"><i class="fa-solid fa-cart-shopping"></i> Tu Carrito</h2>
+            <div id="cart-items">
+                <p>Tu carrito está vacío.</p>
+            </div>
+            <div class="cart-total">
+                Total: $<span id="cart-total-price">0.00</span>
+            </div>
+            <button class="checkout-btn" disabled>Pedir por transferencia</button>
+        </section>
+
+        <!-- SECCIÓN DE CONTACTO -->
+        <section class="contact-section">
+            <h2 style="margin-top:0;"><i class="fa-solid fa-envelope"></i> Contacto</h2>
+            <div class="contact-grid">
+                <div class="contact-info">
+                    <p><i class="fa-solid fa-location-dot"></i> TU DIRECCIÓN ACÁ, Ciudad</p>
+                    <p><i class="fa-brands fa-whatsapp"></i> <a href="https://wa.me/5490000000000" target="_blank" rel="noopener">WhatsApp: +54 9 000 000 0000</a></p>
+                    <p><i class="fa-solid fa-envelope"></i> <a href="mailto:contacto@tuverduleria.com">contacto@tuverduleria.com</a></p>
+                    <p><i class="fa-solid fa-clock"></i> Lunes a sábado de 8 a 20 hs</p>
+                </div>
+                <form id="contact-form" class="contact-form">
+                    <div class="form-group">
+                        <input type="text" id="contact-name" placeholder="Tu nombre" required>
+                    </div>
+                    <div class="form-group">
+                        <input type="email" id="contact-email" placeholder="Tu email" required>
+                    </div>
+                    <div class="form-group">
+                        <textarea id="contact-message" rows="4" placeholder="Tu mensaje" required></textarea>
+                    </div>
+                    <button type="submit" class="contact-submit-btn">Enviar mensaje</button>
+                    <p id="contact-success" style="display:none; color: var(--leaf); font-weight:600;">¡Mensaje enviado! Te vamos a responder pronto.</p>
+                </form>
+            </div>
+
+            <!-- UBICACIÓN EN GOOGLE MAPS -->
+            <!-- Reemplazá la dirección en la URL de abajo (después de "q=") por la dirección real del local -->
+            <div class="map-container">
+                <iframe
+                    src="https://maps.google.com/maps?q=Obelisco%2C%20Buenos%20Aires&t=&z=15&ie=UTF8&iwloc=&output=embed"
+                    width="100%" height="350" style="border:0; display:block;" allowfullscreen="" loading="lazy"
+                    referrerpolicy="no-referrer-when-downgrade">
+                </iframe>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 Verdulería Fresca. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="main-v3.js"></script>
+</body>
+</html>

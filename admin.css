@@ -1,0 +1,163 @@
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Work+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+body {
+    font-family: 'Work Sans', sans-serif;
+    background-color: #F0EDE3;
+    color: #26301F;
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    max-width: 900px;
+    margin: auto;
+    background-color: #fff;
+    padding: 24px;
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(30, 46, 34, 0.1);
+}
+
+h1 {
+    font-family: 'Caveat', cursive;
+    font-size: 2.6rem;
+    font-weight: 700;
+    color: #1E2E22;
+    margin: 0 0 20px;
+}
+
+h2 {
+    color: #2C4D30;
+    border-bottom: 2px solid #C98A3E;
+    padding-bottom: 10px;
+}
+
+.form-container { margin-bottom: 30px; }
+
+.form-group { margin-bottom: 15px; }
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+.form-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-family: 'Work Sans', sans-serif;
+    transition: background-color 0.2s;
+}
+
+#save-btn {
+    background-color: #3F6B44;
+    color: white;
+}
+#save-btn:hover { background-color: #2C4D30; }
+
+#cancel-edit-btn {
+    background-color: #7f8c8d;
+    color: white;
+}
+#cancel-edit-btn:hover { background-color: #6c7a7b; }
+
+#logout-btn {
+    border-radius: 6px;
+    padding: 8px 14px;
+}
+
+.product-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px;
+    border: 1px solid #eee2cc;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background-color: #FAF6EC;
+}
+
+.product-item-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.product-item-info img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.product-item-actions button { margin-left: 10px; }
+
+.edit-btn { background-color: #3498db; color: white; }
+.edit-btn:hover { background-color: #2980b9; }
+
+.delete-btn { background-color: #C1432E; color: white; }
+.delete-btn:hover { background-color: #a33925; }
+
+/* ---------- PEDIDOS ---------- */
+.order-item {
+    padding: 15px;
+    border: 1px solid #eee2cc;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    background-color: #FAF6EC;
+}
+
+.order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.order-header strong {
+    font-family: 'DM Mono', monospace;
+}
+
+.order-status {
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+}
+
+.order-status.pending { background: #FCEBD5; color: #A66C2B; }
+.order-status.paid { background: #DCEEDD; color: #2C4D30; }
+.order-status.cancelled { background: #F3D9D3; color: #C1432E; }
+
+.order-items-list {
+    margin: 10px 0;
+    padding-left: 18px;
+    font-size: 0.92rem;
+    color: #4a5344;
+}
+
+.order-actions { margin-top: 10px; display: flex; gap: 8px; }
+
+.confirm-order-btn { background-color: #3F6B44; color: white; }
+.confirm-order-btn:hover { background-color: #2C4D30; }
+
+.cancel-order-btn { background-color: #C1432E; color: white; }
+.cancel-order-btn:hover { background-color: #a33925; }
