@@ -8,6 +8,11 @@ type CartItem = Product & { quantity: number };
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'Verdulería Fresca',
+  storeAddress: 'Rosario de Santa Fe 1211, Córdoba Capital',
+  storeHours: {
+    weekday: 'Lunes a sábado de 8:00 a 14:00 y de 17:30 a 21:30',
+    sunday: 'Domingos de 9:00 a 14:00',
+  },
   transferAlias: 'mi.verduleria.alias',
   transferCbu: '',
   whatsappNumber: '5490000000000',
@@ -222,10 +227,11 @@ export default function StorefrontPage() {
           <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-envelope" /> Contacto</h2>
           <div className="contact-grid">
             <div className="contact-info">
-              <p><i className="fa-solid fa-location-dot" /> TU DIRECCIÓN ACÁ, Ciudad</p>
-              <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: +54 9 000 000 0000</a></p>
+              <p><i className="fa-solid fa-location-dot" /> {storeInfo.storeAddress}</p>
+              <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
               <p><i className="fa-solid fa-envelope" /> <a href="mailto:contacto@tuverduleria.com">contacto@tuverduleria.com</a></p>
-              <p><i className="fa-solid fa-clock" /> Lunes a sábado de 8 a 20 hs</p>
+              <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
+              <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
             </div>
             <form className="contact-form" onSubmit={handleContactSubmit}>
               <div className="form-group">

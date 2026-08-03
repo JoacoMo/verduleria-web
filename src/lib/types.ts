@@ -27,6 +27,11 @@ export type OrderRecord = {
 
 export type StoreInfo = {
   storeName: string;
+  storeAddress: string;
+  storeHours: {
+    weekday: string;
+    sunday: string;
+  };
   transferAlias: string;
   transferCbu: string;
   whatsappNumber: string;
