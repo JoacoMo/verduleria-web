@@ -24,12 +24,14 @@ cp .env.example .env
 ```
 
 Completá:
-- `DATABASE_URL`: la cadena de conexión directa de Supabase. Usá la URL de conexión directa con `sslmode=require`.
+- `DATABASE_URL`: la cadena del **pooler transaction mode** de Supabase.
+- `DIRECT_URL`: la cadena del **pooler session mode** para migraciones y Prisma.
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD`: usuario y contraseña para vos.
 - `JWT_SECRET`: texto largo y random (por ejemplo con `openssl rand -hex 32`).
 - `STORE_NAME`: el nombre que aparece en los mensajes de WhatsApp.
 - `TRANSFER_ALIAS` / `TRANSFER_CBU`: los datos que se le muestran al cliente para transferir.
 - `WHATSAPP_NUMBER`: tu número con código de país, sin espacios ni signos (ej: `5493511234567`).
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`: para subir imágenes comprimidas a Supabase Storage desde el panel.
 
 ## Prisma
 
@@ -39,6 +41,11 @@ node prisma/seed.js   # opcional: carga 3 productos de ejemplo
 ```
 
 En producción, antes del primer deploy, corré `npx prisma migrate deploy` contra la base de Supabase.
+
+Si usás Supabase, dejá estas dos variables separadas:
+
+- `DATABASE_URL` para runtime en Vercel y Next.js.
+- `DIRECT_URL` para Prisma Migrate y operaciones de esquema.
 
 ## Deploy en Vercel
 
@@ -87,3 +94,4 @@ Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya so
 
 - El panel sigue usando token en `localStorage` y JWT firmado por el backend.
 - El checkout sigue siendo por transferencia manual; Mercado Pago queda para una etapa posterior.
+- Las imágenes de productos se comprimen en el navegador a WebP y se suben a Supabase Storage para ahorrar espacio.

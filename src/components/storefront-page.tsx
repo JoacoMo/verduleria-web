@@ -6,6 +6,8 @@ import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/typ
 
 type CartItem = Product & { quantity: number };
 
+const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
+
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'Verdulería Fresca',
   storeAddress: 'Rosario de Santa Fe 1211, Córdoba Capital',
@@ -169,7 +171,7 @@ export default function StorefrontPage() {
             return (
               <div className="product-card" key={product.id}>
                 <div className="product-card-image">
-                  <img src={product.image} alt={product.name} onError={(event) => { event.currentTarget.src = 'https://via.placeholder.com/300?text=Sin+imagen'; }} />
+                  <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                   <span className="price-tag">${product.price.toFixed(2)}</span>
                 </div>
                 <div className="product-info">
@@ -193,7 +195,7 @@ export default function StorefrontPage() {
               cart.map((item) => (
                 <div className="cart-item" key={item.id}>
                   <div className="cart-item-info">
-                    <img src={item.image} alt={item.name} onError={(event) => { event.currentTarget.src = 'https://via.placeholder.com/50'; }} />
+                    <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                     <div>
                       <strong>{item.name}</strong>
                       <p>${item.price.toFixed(2)} x {item.quantity}</p>

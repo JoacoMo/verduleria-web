@@ -12,6 +12,11 @@ type ProductFormState = {
   image: string;
 };
 
+type CompressedImage = {
+  file: File;
+  previewUrl: string;
+};
+
 const EMPTY_FORM: ProductFormState = {
   name: '',
   price: '',
@@ -19,12 +24,66 @@ const EMPTY_FORM: ProductFormState = {
   image: '',
 };
 
+const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
+
+function compressImageFile(file: File): Promise<CompressedImage> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+    reader.onload = () => {
+      const image = new Image();
+
+      image.onerror = () => reject(new Error('No se pudo cargar la imagen.'));
+      image.onload = () => {
+        const maxWidth = 1400;
+        const scale = Math.min(1, maxWidth / image.width);
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error('No se pudo procesar la imagen.'));
+          return;
+        }
+
+        context.drawImage(image, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('No se pudo comprimir la imagen.'));
+              return;
+            }
+
+            const baseName = file.name.replace(/\.[^.]+$/, '') || 'product-image';
+            const compressedFile = new File([blob], `${baseName}.webp`, { type: 'image/webp' });
+            resolve({ file: compressedFile, previewUrl: URL.createObjectURL(compressedFile) });
+          },
+          'image/webp',
+          0.84,
+        );
+      };
+
+      image.src = typeof reader.result === 'string' ? reader.result : '';
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function AdminPanelPage() {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
+  const [imageUploadLoading, setImageUploadLoading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
@@ -77,6 +136,7 @@ export default function AdminPanelPage() {
   function resetForm() {
     setForm(EMPTY_FORM);
     setEditingProductId(null);
+    setImagePreview(null);
   }
 
   function handleEdit(productId: number) {
@@ -89,8 +149,46 @@ export default function AdminPanelPage() {
       stock: String(product.stock),
       image: product.image,
     });
+    setImagePreview(product.image || null);
     setEditingProductId(productId);
     window.scrollTo(0, 0);
+  }
+
+  async function handleImageSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setImageUploadLoading(true);
+      const compressed = await compressImageFile(file);
+      setImagePreview(compressed.previewUrl);
+      setForm((current) => ({ ...current, image: compressed.file.name }));
+
+      const formData = new FormData();
+      formData.append('file', compressed.file);
+
+      const response = await fetch('/api/admin/upload-product-image', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
+        },
+        body: formData,
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(result.error || 'No se pudo subir la imagen.');
+        setForm((current) => ({ ...current, image: '' }));
+        return;
+      }
+
+      setForm((current) => ({ ...current, image: result.url }));
+    } catch (error) {
+      console.error('Error al subir imagen:', error);
+      alert('No se pudo procesar la imagen.');
+    } finally {
+      setImageUploadLoading(false);
+    }
   }
 
   async function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
@@ -218,6 +316,23 @@ export default function AdminPanelPage() {
             <div className="form-group">
               <label htmlFor="product-image">URL de la Imagen:</label>
               <input id="product-image" type="url" required value={form.image} onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label htmlFor="product-image-file">O subir imagen:</label>
+              <input id="product-image-file" type="file" accept="image/*" onChange={handleImageSelect} />
+              <p style={{ margin: '8px 0 0', color: '#6c7a6a', fontSize: '0.92rem' }}>
+                Se comprime en el navegador y se sube como WebP para ahorrar almacenamiento.
+              </p>
+              <p style={{ margin: '6px 0 0', color: '#6c7a6a', fontSize: '0.85rem' }}>
+                {imageUploadLoading ? 'Procesando imagen...' : form.image ? 'Imagen lista para guardar.' : 'Si no subís archivo, podés pegar una URL manual.'}
+              </p>
+              {imagePreview ? (
+                <img
+                  src={imagePreview}
+                  alt="Vista previa"
+                  style={{ width: '100%', maxWidth: 260, marginTop: 12, borderRadius: 8, border: '1px solid #ddd4bb' }}
+                />
+              ) : null}
             </div>
             <div className="form-buttons">
               <button type="submit" id="save-btn">{editingProductId ? 'Actualizar Producto' : 'Guardar Producto'}</button>

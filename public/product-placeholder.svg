@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Producto sin imagen">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f7f1df"/>
+      <stop offset="100%" stop-color="#e7dcc0"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="400" rx="28" fill="url(#g)"/>
+  <circle cx="300" cy="152" r="58" fill="#c98a3e" opacity="0.9"/>
+  <path d="M300 98c18 0 34 10 42 24-12 2-22 7-30 15-4-22-6-34-12-39Z" fill="#2c4d30"/>
+  <path d="M298 100c-16 0-31 9-39 22 13 3 23 9 30 18 5-20 7-31 9-40Z" fill="#3f6b44"/>
+  <rect x="140" y="240" width="320" height="54" rx="18" fill="#1e2e22" opacity="0.9"/>
+  <text x="300" y="275" text-anchor="middle" font-family="Work Sans, Arial, sans-serif" font-size="28" font-weight="700" fill="#f5f1e6">Sin imagen</text>
+</svg>
