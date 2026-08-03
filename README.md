@@ -1,75 +1,89 @@
-# Verdulería Fresca — Guía de puesta en marcha
+# Verdulería Fresca — Next.js + Supabase
 
-## Qué cambió en esta versión
+## Qué quedó montado
 
-- **Diseño nuevo**: identidad de verdulería de barrio (carteles de tiza, cajones de madera, papel craft) en vez de la plantilla genérica anterior.
-- **Stock por producto**: se descuenta recién cuando vos (el admin) confirmás que llegó el pago.
-- **Checkout por transferencia**: el cliente arma el carrito, el sitio le muestra tu alias/CBU y un botón para mandarte el comprobante por WhatsApp con el número de pedido. **Todavía no está integrado Mercado Pago** — queda para más adelante, ver el apéndice al final.
-- **Login de administrador**: usuario/contraseña únicos, definidos por vos en `.env`, protegen el panel.
-- **Panel de pedidos**: en `panel.html` ahora hay una sección "Pedidos" donde ves cada pedido pendiente y tenés botones "Confirmar pago" (descuenta el stock) o "Cancelar".
+- App migrada a **Next.js** con **TypeScript**.
+- Frontend, login, panel y páginas de estado viven en `src/app`.
+- La API quedó en route handlers de Next, así que Vercel puede ejecutarla sin un servidor Express aparte.
+- La base de datos sigue siendo **Supabase Postgres** vía Prisma.
+- El panel de admin sigue permitiendo crear, editar y eliminar productos, y confirmar o cancelar pedidos.
 
-## 1. Instalar dependencias
+## Desarrollo local
 
 ```bash
 npm install
+npm run dev
 ```
 
-## 2. Variables de entorno
+Abrí `http://localhost:3000` para la tienda y `http://localhost:3000/login` para el panel.
+
+## Variables de entorno
 
 ```bash
 cp .env.example .env
 ```
 
 Completá:
-- `DATABASE_URL`: tu Postgres (la que ya tenías).
+- `DATABASE_URL`: la cadena de conexión directa de Supabase. Usá la URL de conexión directa con `sslmode=require`.
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD`: usuario y contraseña para vos.
 - `JWT_SECRET`: texto largo y random (por ejemplo con `openssl rand -hex 32`).
 - `STORE_NAME`: el nombre que aparece en los mensajes de WhatsApp.
 - `TRANSFER_ALIAS` / `TRANSFER_CBU`: los datos que se le muestran al cliente para transferir.
 - `WHATSAPP_NUMBER`: tu número con código de país, sin espacios ni signos (ej: `5493511234567`).
 
-## 3. Base de datos
+## Prisma
 
 ```bash
 npx prisma migrate dev --name init
 node prisma/seed.js   # opcional: carga 3 productos de ejemplo
 ```
 
-## 4. Correr en local
+En producción, antes del primer deploy, corré `npx prisma migrate deploy` contra la base de Supabase.
 
-```bash
-npm start
-```
+## Deploy en Vercel
 
-Abrí `index.html` con algún servidor estático (por ejemplo la extensión "Live Server"). El panel de admin está en `login.html`.
+Configuración exacta:
 
-## 5. Cómo funciona el flujo de compra ahora
+- Framework Preset: `Next.js`
+- Build Command: `npm run build`
+- Install Command: `npm install`
+- Output Directory: dejar el valor por defecto de Next/Vercel
+- Root Directory: la raíz del repo
 
-1. El cliente agrega productos (no puede superar el stock disponible).
-2. Al tocar "Pedir por transferencia", el backend valida el stock real, crea el pedido (estado `pending`) y le muestra al cliente tu alias/CBU más un botón para mandarte el comprobante por WhatsApp.
-3. El stock **todavía no se descuenta** en este punto — el pedido queda "reservado" solo de nombre.
-4. Vos entrás al panel, ves el pedido en la sección "Pedidos", y cuando confirmás por WhatsApp que llegó la plata, tocás **"Confirmar pago"**. Ahí sí se descuenta el stock y el pedido pasa a "Confirmado".
-5. Si el cliente se arrepiente o nunca transfiere, tocás **"Cancelar"** y no pasa nada con el stock.
+Variables de entorno en Vercel:
 
-## 6. Desplegar (Render, como ya lo tenías)
+- `DATABASE_URL`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+- `JWT_SECRET`
+- `STORE_NAME`
+- `TRANSFER_ALIAS`
+- `TRANSFER_CBU`
+- `WHATSAPP_NUMBER`
 
-- El backend va como Web Service, igual que ahora. Cargá las mismas variables del `.env` en la sección "Environment" de Render.
-- El frontend lo seguís sirviendo como sitio estático.
+## Ver la página subida
 
-## 7. Cosas para personalizar antes de publicar
+1. Subí estos cambios a GitHub.
+2. En Vercel, elegí **Add New Project** e importá ese repositorio.
+3. Confirmá estas opciones:
+	- Framework Preset: `Next.js`
+	- Build Command: `npm run build`
+	- Install Command: `npm install`
+	- Root Directory: la raíz del repo
+4. Cargá las variables de entorno del bloque anterior en Vercel.
+5. Tocá **Deploy**.
+6. Cuando termine, abrí la URL que te da Vercel. Esa ya es la página publicada.
 
-- **Dirección del mapa**: en `index.html`, en el `<iframe>` de Google Maps, reemplazá `Obelisco%2C%20Buenos%20Aires` (después de `q=`) por tu dirección real, con espacios como `%20`.
-- **WhatsApp y email de contacto**: en `index.html`, sección "Contacto".
-- **Colores/tipografía**: todo está centralizado en las variables `:root` al principio de `style.css`, así que se puede ajustar la paleta sin tocar el resto del archivo.
+Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya solo.
 
----
+## Rutas principales
 
-## Apéndice: cómo integrar Mercado Pago más adelante
+- `/` tienda
+- `/login` ingreso al panel
+- `/panel` administración
+- `/success`, `/failure`, `/pending` páginas de estado
 
-Cuando quieras sumar el cobro automático con Mercado Pago (además o en vez de la transferencia manual), avisame y lo reconectamos. En resumen, los pasos van a ser:
+## Notas
 
-1. Crear cuenta en https://www.mercadopago.com.ar/developers/panel y sacar el Access Token (de prueba primero, después el de producción).
-2. Reinstalar la librería: `npm install mercadopago`.
-3. El backend genera un "link de pago" (Checkout Pro) por cada pedido y Mercado Pago le avisa al servidor cuando se acredita, para descontar el stock automáticamente (en vez de que vos lo confirmes a mano).
-
-Sobre las comisiones (a julio 2026, revisar siempre en mercadopago.com.ar porque cambian): un link de pago ronda 6,29% + IVA con acreditación inmediata para tarjeta de crédito, y baja si elegís que el dinero se acredite a los 14 o 30 días. El QR presencial es bastante más barato (cerca de 0,99%). Las transferencias directas no tienen comisión, que es justamente lo que estás usando ahora.
+- El panel sigue usando token en `localStorage` y JWT firmado por el backend.
+- El checkout sigue siendo por transferencia manual; Mercado Pago queda para una etapa posterior.
