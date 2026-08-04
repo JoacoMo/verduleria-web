@@ -259,7 +259,7 @@ export default function StorefrontPage() {
                 {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
               </ul>
               <p>Después mandanos el comprobante por WhatsApp con el número de pedido, y en cuanto lo confirmemos preparamos tu compra.</p>
-              <a className="whatsapp-btn" href={buildWhatsappMessage(orderConfirmation.items, orderConfirmation.orderId, orderConfirmation.total)} target="_blank" rel="noopener noreferrer">
+              <a className="whatsapp-btn" href={buildWhatsappMessage(orderConfirmation.items, orderConfirmation.orderId, orderConfirmation.total, isDelivery, totalWeight)} target="_blank" rel="noopener noreferrer">
                 <i className="fa-brands fa-whatsapp" /> Enviar comprobante por WhatsApp
               </a>
             </div>
