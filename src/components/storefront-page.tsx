@@ -211,17 +211,33 @@ export default function StorefrontPage() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <label style={{ fontSize: '0.85rem', color: '#6c7a6a' }}>
-                      Cantidad
-                      <input
-                        type="number"
-                        min={PRODUCT_CART_STEP[item.unit]}
-                        step={PRODUCT_CART_STEP[item.unit]}
-                        value={item.quantity}
-                        onChange={(event) => updateCartQuantity(item.id, Number(event.target.value))}
-                        style={{ marginLeft: 8, width: 110 }}
-                      />
+                      {item.unit === 'kg' ? 'Kilogramos' : item.unit === 'g' ? 'Gramos' : 'Unidades'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.id, item.quantity - PRODUCT_CART_STEP[item.unit])}
+                          style={{ padding: '4px 8px' }}
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min={PRODUCT_CART_STEP[item.unit]}
+                          step={PRODUCT_CART_STEP[item.unit]}
+                          value={item.quantity}
+                          onChange={(event) => updateCartQuantity(item.id, Number(event.target.value))}
+                          style={{ width: 60, textAlign: 'center' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity(item.id, item.quantity + PRODUCT_CART_STEP[item.unit])}
+                          style={{ padding: '4px 8px' }}
+                        >
+                          +
+                        </button>
+                      </div>
                     </label>
-                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)}>&times;</button>
+                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)} title="Eliminar producto">&times;</button>
                   </div>
                 </div>
               ))
