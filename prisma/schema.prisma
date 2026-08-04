@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
@@ -13,15 +13,15 @@ model Product {
   name      String
   price     Float
   image     String
-  stock     Int      @default(0)
+  unit      String   @default("kg")
   createdAt DateTime @default(now())
 }
 
 model Order {
   id             Int      @id @default(autoincrement())
-  items          Json
+  items          Json // [{ id, name, price, quantity }]
   total          Float
-  status         String   @default("pending")
+  status         String   @default("pending") // pending | paid | failed
   mpPreferenceId String?
   mpPaymentId    String?
   customerName   String?
