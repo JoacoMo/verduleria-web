@@ -24,18 +24,10 @@ export async function PUT(request: Request, context: RouteContext) {
     }
 
     await prisma.$transaction(async (tx) => {
-      const items = order.items as Array<{ id: number; quantity: number }>;
-      for (const item of items) {
-        await tx.product.update({
-          where: { id: item.id },
-          data: { stock: { decrement: item.quantity } },
-        });
-      }
-
       await tx.order.update({ where: { id: orderId }, data: { status: 'paid' } });
     });
 
-    return NextResponse.json({ message: 'Pedido confirmado y stock actualizado.' });
+    return NextResponse.json({ message: 'Pedido confirmado.' });
   } catch (error) {
     console.error('Error al confirmar pedido:', error);
     return NextResponse.json({ error: 'No se pudo confirmar el pedido.' }, { status: 500 });

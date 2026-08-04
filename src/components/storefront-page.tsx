@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
+import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
 
 type CartItem = Product & { quantity: number };
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 
 const DEFAULT_STORE_INFO: StoreInfo = {
-  storeName: 'Verdulería Fresca',
-  storeAddress: 'Rosario de Santa Fe 1211, Córdoba Capital',
+  storeName: 'El Pampa',
+  storeAddress: 'Barrio General Paz, Córdoba Capital',
   storeHours: {
     weekday: 'Lunes a sábado de 8:00 a 14:00 y de 17:30 a 21:30',
     sunday: 'Domingos de 9:00 a 14:00',
@@ -54,31 +55,38 @@ export default function StorefrontPage() {
     void fetchStoreInfo();
   }, []);
 
-  const cartCount = useMemo(() => cart.reduce((sum, item) => sum + item.quantity, 0), [cart]);
+  const cartCount = useMemo(() => cart.length, [cart]);
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
 
   function addToCart(productId: number) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
 
+    const quantityToAdd = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
     const existingItem = cart.find((item) => item.id === productId);
-    const currentQty = existingItem ? existingItem.quantity : 0;
-
-    if (currentQty + 1 > product.stock) {
-      alert(`No hay más stock disponible de ${product.name}.`);
-      return;
-    }
 
     setCart((currentCart) => {
       const nextCart = [...currentCart];
       const itemIndex = nextCart.findIndex((item) => item.id === productId);
       if (itemIndex >= 0) {
-        nextCart[itemIndex] = { ...nextCart[itemIndex], quantity: nextCart[itemIndex].quantity + 1 };
+        nextCart[itemIndex] = {
+          ...nextCart[itemIndex],
+          quantity: normalizeProductQuantity(nextCart[itemIndex].quantity + quantityToAdd, product.unit),
+        };
       } else {
-        nextCart.push({ ...product, quantity: 1 });
+        nextCart.push({ ...product, quantity: quantityToAdd });
       }
       return nextCart;
     });
+  }
+
+  function updateCartQuantity(productId: number, quantity: number) {
+    setCart((currentCart) => currentCart.flatMap((item) => {
+      if (item.id !== productId) return [item];
+      const normalizedQuantity = normalizeProductQuantity(quantity, item.unit);
+      if (normalizedQuantity <= 0) return [];
+      return [{ ...item, quantity: normalizedQuantity }];
+    }));
   }
 
   function removeFromCart(productId: number) {
@@ -86,7 +94,7 @@ export default function StorefrontPage() {
   }
 
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number) {
-    const lines = items.map((item) => `• ${item.quantity}x ${item.name} — $${(item.price * item.quantity).toFixed(2)}`).join('%0A');
+    const lines = items.map((item) => `• ${formatProductQuantity(item.quantity, item.unit)} de ${item.name} — $${(item.price * item.quantity).toFixed(2)}`).join('%0A');
     const text =
       `Hola! Quiero confirmar el pago del pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
       `${lines}%0A%0A` +
@@ -111,7 +119,7 @@ export default function StorefrontPage() {
         return;
       }
 
-      setOrderConfirmation({ ...result, items: cart.map(({ id, name, price, quantity }) => ({ id, name, price, quantity })) });
+      setOrderConfirmation({ ...result, items: cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit })) });
       setCart([]);
     } catch (error) {
       console.error('Error en el checkout:', error);
@@ -146,11 +154,11 @@ export default function StorefrontPage() {
       <header>
         <div className="container">
           <div className="hero-text">
-            <h1><i className="fa-solid fa-carrot" />Verdulería Fresca</h1>
+            <h1><i className="fa-solid fa-carrot" />El Pampa</h1>
             <svg className="hero-underline" viewBox="0 0 260 14" xmlns="http://www.w3.org/2000/svg">
               <path d="M2 9 C 40 2, 80 13, 120 7 S 200 1, 258 8" stroke="#C98A3E" strokeWidth="3" fill="none" strokeLinecap="round" />
             </svg>
-            <p className="hero-tagline">Del cajón a tu mesa. Verdura y fruta fresca todos los días, pedís online y retirás o coordinamos la entrega.</p>
+            <p className="hero-tagline">Verdulería y frutería en Barrio General Paz, Córdoba Capital. Pedí por kilo, gramos o unidad y coordinamos retiro o envío.</p>
           </div>
           <div className="cart-icon">
             <i className="fa-solid fa-cart-shopping" />
@@ -164,21 +172,21 @@ export default function StorefrontPage() {
 
       <main className="container">
         <h2><i className="fa-solid fa-leaf" /> Nuestros Productos Frescos</h2>
-        <p className="section-subtitle">Cosecha del día, directo del cajón.</p>
+        <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
         <div className="product-grid">
           {products.map((product) => {
-            const sinStock = product.stock <= 0;
+            const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
             return (
               <div className="product-card" key={product.id}>
                 <div className="product-card-image">
                   <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                  <span className="price-tag">${product.price.toFixed(2)}</span>
+                  <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
                 </div>
                 <div className="product-info">
                   <h3>{product.name}</h3>
-                  {sinStock ? <p className="sin-stock">Sin stock por ahora</p> : <p className="stock-note">{product.stock} disponibles</p>}
-                  <button className="add-to-cart-btn" onClick={() => addToCart(product.id)} disabled={sinStock}>
-                    <i className="fa-solid fa-cart-plus" /> Agregar
+                  <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
+                  <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
+                    <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
                   </button>
                 </div>
               </div>
@@ -198,10 +206,23 @@ export default function StorefrontPage() {
                     <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                     <div>
                       <strong>{item.name}</strong>
-                      <p>${item.price.toFixed(2)} x {item.quantity}</p>
+                      <p>${item.price.toFixed(2)} x {formatProductQuantity(item.quantity, item.unit)}</p>
                     </div>
                   </div>
-                  <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)}>&times;</button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: '0.85rem', color: '#6c7a6a' }}>
+                      Cantidad
+                      <input
+                        type="number"
+                        min={PRODUCT_CART_STEP[item.unit]}
+                        step={PRODUCT_CART_STEP[item.unit]}
+                        value={item.quantity}
+                        onChange={(event) => updateCartQuantity(item.id, Number(event.target.value))}
+                        style={{ marginLeft: 8, width: 110 }}
+                      />
+                    </label>
+                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)}>&times;</button>
+                  </div>
                 </div>
               ))
             )}
@@ -267,7 +288,7 @@ export default function StorefrontPage() {
 
       <footer>
         <div className="container">
-          <p>&copy; 2026 Verdulería Fresca. Todos los derechos reservados.</p>
+          <p>&copy; 2026 El Pampa. Verdulería y frutería en Barrio General Paz, Córdoba Capital.</p>
         </div>
       </footer>
     </>

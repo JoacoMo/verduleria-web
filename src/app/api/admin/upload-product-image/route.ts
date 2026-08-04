@@ -26,7 +26,27 @@ async function ensureBucketExists() {
   const buckets = await bucketsResponse.json();
   const bucketExists = Array.isArray(buckets) && buckets.some((bucket: { name?: string }) => bucket.name === SUPABASE_STORAGE_BUCKET);
 
-  if (bucketExists) return;
+  if (bucketExists) {
+    const updateResponse = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${SUPABASE_STORAGE_BUCKET}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        public: true,
+      }),
+    });
+
+    if (!updateResponse.ok) {
+      const body = await updateResponse.text();
+      console.error('Error al hacer público el bucket:', body);
+      throw new Error('No se pudo marcar el bucket como público.');
+    }
+
+    return;
+  }
 
   const createResponse = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
     method: 'POST',
@@ -83,8 +103,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No se pudo subir la imagen.' }, { status: 500 });
     }
 
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${safeName}`;
+
     return NextResponse.json({
-      url: `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${safeName}`,
+      url: publicUrl,
     });
   } catch (error) {
     console.error('Error en /api/admin/upload-product-image:', error);

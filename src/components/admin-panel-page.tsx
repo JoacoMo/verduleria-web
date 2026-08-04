@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { FormEvent } from 'react';
 import type { OrderRecord, Product } from '@/lib/types';
+import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
 
 type ProductFormState = {
   name: string;
   price: string;
-  stock: string;
+  unit: 'kg' | 'g' | 'unidad';
   image: string;
 };
 
@@ -20,7 +21,7 @@ type CompressedImage = {
 const EMPTY_FORM: ProductFormState = {
   name: '',
   price: '',
-  stock: '',
+  unit: 'kg',
   image: '',
 };
 
@@ -146,7 +147,7 @@ export default function AdminPanelPage() {
     setForm({
       name: product.name,
       price: String(product.price),
-      stock: String(product.stock),
+      unit: product.unit,
       image: product.image,
     });
     setImagePreview(product.image || null);
@@ -197,7 +198,7 @@ export default function AdminPanelPage() {
     const payload = {
       name: form.name,
       price: Number(form.price),
-      stock: Number(form.stock),
+      unit: form.unit,
       image: form.image,
     };
 
@@ -310,8 +311,12 @@ export default function AdminPanelPage() {
               <input id="product-price" type="number" step="0.01" required value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} />
             </div>
             <div className="form-group">
-              <label htmlFor="product-stock">Stock disponible:</label>
-              <input id="product-stock" type="number" step="1" min="0" required value={form.stock} onChange={(event) => setForm((current) => ({ ...current, stock: event.target.value }))} />
+              <label htmlFor="product-unit">Unidad de venta:</label>
+              <select id="product-unit" required value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value as ProductFormState['unit'] }))}>
+                <option value="kg">Kilo</option>
+                <option value="g">Gramo</option>
+                <option value="unidad">Unidad</option>
+              </select>
             </div>
             <div className="form-group">
               <label htmlFor="product-image">URL de la Imagen:</label>
@@ -352,7 +357,7 @@ export default function AdminPanelPage() {
                 <div>
                   <strong>{product.name}</strong>
                   <br />
-                  ${product.price.toFixed(2)} — Stock: {product.stock}
+                  ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
                 </div>
               </div>
               <div className="product-item-actions">
@@ -366,12 +371,12 @@ export default function AdminPanelPage() {
         <hr />
 
         <h2>Pedidos</h2>
-        <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. Ahí se descuenta el stock.</p>
+        <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. El sistema ya no descuenta stock porque los productos se venden por unidad de medida.</p>
         <div>
           {orders.length === 0 ? <p>Todavía no hay pedidos.</p> : null}
           {orders.map((order) => {
             const itemsHtml = order.items.map((item) => (
-              <li key={`${order.id}-${item.id}`}>{item.quantity}x {item.name} — ${(item.price * item.quantity).toFixed(2)}</li>
+              <li key={`${order.id}-${item.id}`}>{formatProductQuantity(item.quantity, item.unit)} de {item.name} — ${(item.price * item.quantity).toFixed(2)}</li>
             ));
             const statusClass = order.status === 'paid' ? 'paid' : order.status === 'pending' ? 'pending' : 'cancelled';
 

@@ -4,15 +4,15 @@ import { prisma } from '@/lib/prisma';
 export const runtime = 'nodejs';
 
 const DEFAULT_PRODUCT_SEED = [
-  { name: 'Tomate', price: 800, image: 'https://via.placeholder.com/300?text=Tomate', stock: 50 },
-  { name: 'Papa', price: 500, image: 'https://via.placeholder.com/300?text=Papa', stock: 100 },
-  { name: 'Lechuga', price: 600, image: 'https://via.placeholder.com/300?text=Lechuga', stock: 30 },
+  { name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg' },
+  { name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg' },
+  { name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad' },
 ];
 
 const DEFAULT_PRODUCTS_FALLBACK = [
-  { id: -1, name: 'Tomate', price: 800, image: 'https://via.placeholder.com/300?text=Tomate', stock: 50 },
-  { id: -2, name: 'Papa', price: 500, image: 'https://via.placeholder.com/300?text=Papa', stock: 100 },
-  { id: -3, name: 'Lechuga', price: 600, image: 'https://via.placeholder.com/300?text=Lechuga', stock: 30 },
+  { id: -1, name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg' },
+  { id: -2, name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg' },
+  { id: -3, name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad' },
 ];
 
 export async function GET() {

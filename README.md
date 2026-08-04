@@ -1,4 +1,4 @@
-# Verdulería Fresca — Next.js + Supabase
+# El Pampa — Next.js + Supabase
 
 ## Qué quedó montado
 
@@ -6,7 +6,8 @@
 - Frontend, login, panel y páginas de estado viven en `src/app`.
 - La API quedó en route handlers de Next, así que Vercel puede ejecutarla sin un servidor Express aparte.
 - La base de datos sigue siendo **Supabase Postgres** vía Prisma.
-- El panel de admin sigue permitiendo crear, editar y eliminar productos, y confirmar o cancelar pedidos.
+- El panel de admin permite crear, editar y eliminar productos, y confirmar o cancelar pedidos.
+- Los productos ahora se venden por `kg`, `g` o `unidad`, sin stock manual.
 
 ## Desarrollo local
 
@@ -29,9 +30,13 @@ Completá:
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD`: usuario y contraseña para vos.
 - `JWT_SECRET`: texto largo y random (por ejemplo con `openssl rand -hex 32`).
 - `STORE_NAME`: el nombre que aparece en los mensajes de WhatsApp.
+- `STORE_ADDRESS`: dirección o zona local que se muestra en la web.
+- `STORE_NEIGHBORHOOD`: barrio principal para SEO local y datos estructurados.
+- `SITE_URL`: URL canónica del sitio para metadata y Open Graph.
 - `TRANSFER_ALIAS` / `TRANSFER_CBU`: los datos que se le muestran al cliente para transferir.
 - `WHATSAPP_NUMBER`: tu número con código de país, sin espacios ni signos (ej: `5493511234567`).
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`: para subir imágenes comprimidas a Supabase Storage desde el panel.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `CONTACT_TO_EMAIL` y opcionalmente `CONTACT_FROM_EMAIL`: para que el formulario de contacto mande correo real por SMTP.
 
 ## Prisma
 
@@ -64,6 +69,9 @@ Variables de entorno en Vercel:
 - `ADMIN_PASSWORD`
 - `JWT_SECRET`
 - `STORE_NAME`
+- `STORE_ADDRESS`
+- `STORE_NEIGHBORHOOD`
+- `SITE_URL`
 - `TRANSFER_ALIAS`
 - `TRANSFER_CBU`
 - `WHATSAPP_NUMBER`
@@ -95,3 +103,4 @@ Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya so
 - El panel sigue usando token en `localStorage` y JWT firmado por el backend.
 - El checkout sigue siendo por transferencia manual; Mercado Pago queda para una etapa posterior.
 - Las imágenes de productos se comprimen en el navegador a WebP y se suben a Supabase Storage para ahorrar espacio.
+- El formulario de contacto manda correo real solo si configurás SMTP en las variables de entorno.

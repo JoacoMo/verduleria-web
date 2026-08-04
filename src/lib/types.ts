@@ -1,9 +1,11 @@
+import type { ProductUnit } from './product-units';
+
 export type Product = {
   id: number;
   name: string;
   price: number;
   image: string;
-  stock: number;
+  unit: ProductUnit;
   createdAt?: string;
 };
 
@@ -12,6 +14,7 @@ export type OrderItem = {
   name: string;
   price: number;
   quantity: number;
+  unit: ProductUnit;
 };
 
 export type OrderRecord = {
@@ -41,7 +44,7 @@ export type ProductPayload = {
   name?: string;
   price?: number;
   image?: string;
-  stock?: number;
+  unit?: ProductUnit;
 };
 
 export type OrderConfirmation = StoreInfo & {

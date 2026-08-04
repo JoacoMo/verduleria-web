@@ -10,9 +10,9 @@ async function main() {
 
     await prisma.product.createMany({
         data: [
-            { name: 'Tomate', price: 800, image: 'https://via.placeholder.com/300?text=Tomate', stock: 50 },
-            { name: 'Papa', price: 500, image: 'https://via.placeholder.com/300?text=Papa', stock: 100 },
-            { name: 'Lechuga', price: 600, image: 'https://via.placeholder.com/300?text=Lechuga', stock: 30 },
+            { name: 'Tomate', price: 800, image: 'https://via.placeholder.com/300?text=Tomate', unit: 'kg' },
+            { name: 'Papa', price: 500, image: 'https://via.placeholder.com/300?text=Papa', unit: 'kg' },
+            { name: 'Ajo', price: 1200, image: 'https://via.placeholder.com/300?text=Ajo', unit: 'unidad' },
         ],
     });
 

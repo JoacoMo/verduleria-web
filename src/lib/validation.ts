@@ -1,8 +1,10 @@
+import { isProductUnit } from './product-units';
+
 export type ProductCreatePayload = {
   name: string;
   price: number;
   image: string;
-  stock: number;
+  unit: 'kg' | 'g' | 'unidad';
 };
 
 export type ProductUpdatePayload = Partial<ProductCreatePayload>;
@@ -11,7 +13,7 @@ type ProductPayloadInput = {
   name?: unknown;
   price?: unknown;
   image?: unknown;
-  stock?: unknown;
+  unit?: unknown;
 };
 
 export function parseProductPayload(payload: unknown, options?: { partial?: false }): ProductCreatePayload;
@@ -45,12 +47,11 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
     data.image = image;
   }
 
-  if (!partial || body.stock !== undefined) {
-    const stock = Number(body.stock);
-    if (!Number.isFinite(stock) || stock < 0) {
-      throw new Error('El stock debe ser un número válido mayor o igual a 0.');
+  if (!partial || body.unit !== undefined) {
+    if (!isProductUnit(body.unit)) {
+      throw new Error('La unidad debe ser kg, g o unidad.');
     }
-    data.stock = Math.trunc(stock);
+    data.unit = body.unit;
   }
 
   return data;

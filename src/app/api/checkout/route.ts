@@ -21,30 +21,21 @@ export async function POST(request: Request) {
     const productIds = cart.map((item) => item.id);
     const dbProducts = await prisma.product.findMany({ where: { id: { in: productIds } } });
 
-    const itemsForOrder: Array<{ id: number; name: string; price: number; quantity: number }> = [];
-    const sinStock: string[] = [];
+    const itemsForOrder: Array<{ id: number; name: string; price: number; quantity: number; unit: string }> = [];
     let total = 0;
 
     for (const cartItem of cart) {
       const product = dbProducts.find((item) => item.id === cartItem.id);
-      if (!product) continue;
-
-      if (product.stock < cartItem.quantity) {
-        sinStock.push(product.name);
-        continue;
-      }
+      if (!product || !Number.isFinite(cartItem.quantity) || cartItem.quantity <= 0) continue;
 
       itemsForOrder.push({
         id: product.id,
         name: product.name,
         price: product.price,
         quantity: cartItem.quantity,
+        unit: product.unit,
       });
       total += product.price * cartItem.quantity;
-    }
-
-    if (sinStock.length > 0) {
-      return NextResponse.json({ error: `Sin stock suficiente: ${sinStock.join(', ')}` }, { status: 409 });
     }
 
     if (itemsForOrder.length === 0) {
