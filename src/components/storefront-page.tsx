@@ -11,14 +11,14 @@ const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'El Pampa',
-  storeAddress: 'Barrio General Paz, Córdoba Capital',
+  storeAddress: 'Rosario de Santafe 1211, Córdoba Capital',
   storeHours: {
     weekday: 'Lunes a sábado de 8:00 a 14:00 y de 17:30 a 21:30',
     sunday: 'Domingos de 9:00 a 14:00',
   },
-  transferAlias: 'mi.verduleria.alias',
+  transferAlias: 'jgastaldo',
   transferCbu: '',
-  whatsappNumber: '5490000000000',
+  whatsappNumber: '5493517656500',
 };
 
 export default function StorefrontPage() {
@@ -181,7 +181,7 @@ export default function StorefrontPage() {
       </header>
 
       <main className="container">
-        <h2><i className="fa-solid fa-leaf" /> Nuestros Productos Frescos</h2>
+        <h2><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
         <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
         <div className="product-grid">
           {products.map((product) => {
@@ -278,7 +278,7 @@ export default function StorefrontPage() {
             <div className="contact-info">
               <p><i className="fa-solid fa-location-dot" /> {storeInfo.storeAddress}</p>
               <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
-              <p><i className="fa-solid fa-envelope" /> <a href="mailto:contacto@tuverduleria.com">contacto@tuverduleria.com</a></p>
+              <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
               <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
               <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
             </div>
