@@ -96,14 +96,18 @@ export default function StorefrontPage() {
   }
 
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
-    const lines = items.map((item) => `• ${item.name}: ${formatProductQuantity(item.quantity, item.unit)} - $${(item.price * item.quantity).toFixed(2)}`).join('%0A');
+    const lines = items.map((item) => {
+      const quantityText = item.unit === 'unidad' ? `${item.quantity}x` : `${item.quantity}${item.unit}x`;
+      return `* ${quantityText} ${item.name} — $${(item.price * item.quantity).toFixed(2)}`;
+    }).join('%0A');
+    
     const deliveryText = isDelivery ? 'Quiero que me lo envíen a domicilio.' : 'Voy a pasar a retirarlo.';
     const deliveryWarning = isDelivery && totalWeight > 7 ? '%0A%0A⚠️ *Nota:* Tu pedido pesa más de 7kg. Tené en cuenta que para Uber Moto el máximo suele ser 7-8kg.' : '';
 
     const text =
-      `Hola! Realicé el pedido #${orderId} en ${storeInfo.storeName}.%0A%0A` +
-      `*Pedido:*%0A${lines}%0A%0A` +
-      `*Total:* $${total.toFixed(2)}%0A` +
+      `Hola! Quiero confirmar el pago del pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
+      `${lines}%0A%0A` +
+      `Total: $${total.toFixed(2)}%0A%0A` +
       `*Entrega:* ${deliveryText}${deliveryWarning}%0A%0A` +
       'Ya hice la transferencia, te mando el comprobante:';
     return `https://wa.me/${storeInfo.whatsappNumber}?text=${text}`;
