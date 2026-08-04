@@ -28,6 +28,8 @@ export default function StorefrontPage() {
   const [orderConfirmation, setOrderConfirmation] = useState<OrderConfirmation | null>(null);
   const [contactForm, setContactForm] = useState({ name: '', email: '', message: '' });
   const [contactSuccess, setContactSuccess] = useState(false);
+  const [isDelivery, setIsDelivery] = useState(false);
+  const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
 
   useEffect(() => {
     async function fetchProducts() {
