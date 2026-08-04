@@ -9,5 +9,6 @@ export const siteConfig = {
   },
   transferAlias: process.env.TRANSFER_ALIAS || 'mi.verduleria.alias',
   transferCbu: process.env.TRANSFER_CBU || '',
-  whatsappNumber: process.env.WHATSAPP_NUMBER || '5490000000000',
+  whatsappNumber: process.env.WHATSAPP_NUMBER || '5493517656500',
+  contactEmail: 'gastaldo50@gmail.com',
 };
