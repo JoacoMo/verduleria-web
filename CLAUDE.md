@@ -16,6 +16,7 @@ npm run start              # serve production build
 npx prisma migrate dev --name <name>   # create/apply a migration locally
 npm run prisma:deploy               # `prisma migrate deploy`, run in production before first deploy
 node prisma/seed.js         # optional: seeds 3 sample products
+node scripts/fill-product-images.js [--apply] [--all] [--id=N]  # optional: fills placeholder product images from Pexels, see script header
 ```
 
 There is no lint script, no test runner, and no Tailwind config configured in this project — don't assume `npm run lint` or `npm test` exist, and don't reach for Tailwind utility classes (styling is plain CSS, see below).
