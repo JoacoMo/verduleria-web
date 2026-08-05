@@ -14,6 +14,7 @@ model Product {
   price     Float
   image     String
   unit      String   @default("kg")
+  category  String   @default("Almacén")
   createdAt DateTime @default(now())
 }
 

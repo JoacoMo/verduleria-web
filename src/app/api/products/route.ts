@@ -4,15 +4,15 @@ import { prisma } from '@/lib/prisma';
 export const runtime = 'nodejs';
 
 const DEFAULT_PRODUCT_SEED = [
-  { name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg' },
-  { name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg' },
-  { name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad' },
+  { name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg', category: 'Verduras' },
+  { name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg', category: 'Verduras' },
+  { name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad', category: 'Verduras' },
 ];
 
 const DEFAULT_PRODUCTS_FALLBACK = [
-  { id: -1, name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg' },
-  { id: -2, name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg' },
-  { id: -3, name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad' },
+  { id: -1, name: 'Tomate', price: 800, image: '/product-placeholder.svg', unit: 'kg', category: 'Verduras' },
+  { id: -2, name: 'Papa', price: 500, image: '/product-placeholder.svg', unit: 'kg', category: 'Verduras' },
+  { id: -3, name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad', category: 'Verduras' },
 ];
 
 export async function GET() {

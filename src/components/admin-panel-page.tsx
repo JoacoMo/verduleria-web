@@ -6,6 +6,7 @@ import type { FormEvent } from 'react';
 import type { OrderRecord, Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
+import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
 
 const INITIAL_VISIBLE_PRODUCTS = 5;
 
@@ -30,6 +31,7 @@ type ProductFormState = {
   price: string;
   unit: 'kg' | 'g' | 'unidad';
   image: string;
+  category: ProductCategory;
 };
 
 type CompressedImage = {
@@ -42,6 +44,7 @@ const EMPTY_FORM: ProductFormState = {
   price: '',
   unit: 'kg',
   image: '',
+  category: 'Verduras',
 };
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
@@ -180,6 +183,7 @@ export default function AdminPanelPage() {
       price: String(product.price),
       unit: product.unit,
       image: product.image,
+      category: product.category,
     });
     setImagePreview(product.image || null);
     setEditingProductId(productId);
@@ -231,6 +235,7 @@ export default function AdminPanelPage() {
       price: Number(form.price),
       unit: form.unit,
       image: form.image,
+      category: form.category,
     };
 
     const isEditing = editingProductId !== null;
@@ -399,6 +404,14 @@ export default function AdminPanelPage() {
               </select>
             </div>
             <div className="form-group">
+              <label htmlFor="product-category">Categoría:</label>
+              <select id="product-category" required value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value as ProductCategory }))}>
+                {PRODUCT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
               <label htmlFor="product-image">URL de la Imagen (opcional):</label>
               <input id="product-image" type="url" value={form.image} onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))} />
             </div>
@@ -459,7 +472,7 @@ export default function AdminPanelPage() {
                 <div className="product-item-info">
                   <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                   <div>
-                    <strong>{product.name}</strong>
+                    <strong>{product.name}</strong> <span className="category-tag">{product.category}</span>
                     <br />
                     ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
                   </div>

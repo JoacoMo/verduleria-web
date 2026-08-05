@@ -1,4 +1,5 @@
 import type { ProductUnit } from './product-units';
+import type { ProductCategory } from './product-categories';
 
 export type Product = {
   id: number;
@@ -6,6 +7,7 @@ export type Product = {
   price: number;
   image: string;
   unit: ProductUnit;
+  category: ProductCategory;
   createdAt?: string;
 };
 
@@ -51,6 +53,7 @@ export type ProductPayload = {
   price?: number;
   image?: string;
   unit?: ProductUnit;
+  category?: ProductCategory;
 };
 
 export type OrderConfirmation = StoreInfo & {

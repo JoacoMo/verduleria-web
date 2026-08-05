@@ -6,11 +6,16 @@ import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/typ
 import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
+import { isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
+import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
 
 type CartItem = Product & { quantity: number };
+type CategoryFilter = ProductCategory | 'Todas';
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 const INITIAL_VISIBLE_PRODUCTS = 8;
+const MAP_DIRECTIONS_URL = 'https://maps.google.com/?cid=899078826367002557';
+const CATEGORY_FILTERS: CategoryFilter[] = ['Todas', ...PRODUCT_CATEGORIES];
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'El Pampa',
@@ -37,13 +42,24 @@ export default function StorefrontPage() {
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllProducts, setShowAllProducts] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>('Todas');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [storeStatus, setStoreStatus] = useState<{ open: boolean; pastCutoff: boolean } | null>(null);
 
   useEffect(() => {
     if (!toastMessage) return;
     const timeout = setTimeout(() => setToastMessage(null), 2500);
     return () => clearTimeout(timeout);
   }, [toastMessage]);
+
+  useEffect(() => {
+    function updateStoreStatus() {
+      setStoreStatus({ open: isStoreOpenNow(), pastCutoff: isPastOrderCutoff() });
+    }
+    updateStoreStatus();
+    const interval = setInterval(updateStoreStatus, 60_000);
+    return () => clearInterval(interval);
+  }, []);
   const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
 
   useEffect(() => {
@@ -114,6 +130,29 @@ export default function StorefrontPage() {
     setToastMessage(`${product.name} agregado al carrito`);
   }
 
+  function adjustGridQuantity(productId: number, direction: 1 | -1) {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+    const step = PRODUCT_CART_STEP[product.unit];
+
+    setCart((currentCart) => {
+      const itemIndex = currentCart.findIndex((item) => item.id === productId);
+      if (itemIndex < 0) {
+        if (direction < 0) return currentCart;
+        return [...currentCart, { ...product, quantity: PRODUCT_DEFAULT_CART_QUANTITY[product.unit] }];
+      }
+
+      const nextQuantity = normalizeProductQuantity(currentCart[itemIndex].quantity + direction * step, product.unit);
+      if (nextQuantity <= 0) {
+        return currentCart.filter((item) => item.id !== productId);
+      }
+
+      const nextCart = [...currentCart];
+      nextCart[itemIndex] = { ...nextCart[itemIndex], quantity: nextQuantity };
+      return nextCart;
+    });
+  }
+
   function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
     setCart((currentCart) => currentCart.map((item) => {
       if (item.id !== productId) return item;
@@ -141,9 +180,12 @@ export default function StorefrontPage() {
   }
 
   const filteredProducts = useMemo(() => {
-    if (!searchQuery.trim()) return products;
-    return products.filter((product) => matchesSearch(product.name, searchQuery));
-  }, [products, searchQuery]);
+    const byCategory = activeCategory === 'Todas'
+      ? products
+      : products.filter((product) => product.category === activeCategory);
+    if (!searchQuery.trim()) return byCategory;
+    return byCategory.filter((product) => matchesSearch(product.name, searchQuery));
+  }, [products, searchQuery, activeCategory]);
 
   const isSearching = searchQuery.trim().length > 0;
   const visibleProducts = isSearching || showAllProducts
@@ -258,12 +300,30 @@ export default function StorefrontPage() {
           />
         </div>
 
-        {isSearching && filteredProducts.length === 0 ? (
-          <p className="no-results">No encontramos productos con &quot;{searchQuery}&quot;.</p>
+        <div className="category-filters">
+          {CATEGORY_FILTERS.map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={`category-filter-btn ${activeCategory === category ? 'active' : ''}`}
+              onClick={() => setActiveCategory(category)}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+
+        {filteredProducts.length === 0 ? (
+          <p className="no-results">
+            {isSearching
+              ? `No encontramos productos con "${searchQuery}".`
+              : `No hay productos en "${activeCategory}" por ahora.`}
+          </p>
         ) : (
           <div className="product-grid">
             {visibleProducts.map((product) => {
               const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+              const cartItem = cart.find((item) => item.id === product.id);
               return (
                 <div className="product-card" key={product.id}>
                   <div className="product-card-image">
@@ -273,9 +333,17 @@ export default function StorefrontPage() {
                   <div className="product-info">
                     <h3>{product.name}</h3>
                     <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                    <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
-                      <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
-                    </button>
+                    {cartItem ? (
+                      <div className="grid-qty-controls">
+                        <button type="button" onClick={() => adjustGridQuantity(product.id, -1)} aria-label={`Sacar ${product.name}`}>-</button>
+                        <span>{formatProductQuantity(cartItem.quantity, product.unit)}</span>
+                        <button type="button" onClick={() => adjustGridQuantity(product.id, 1)} aria-label={`Agregar más ${product.name}`}>+</button>
+                      </div>
+                    ) : (
+                      <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
+                        <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -296,13 +364,29 @@ export default function StorefrontPage() {
         ) : null}
 
         <section className="contact-section">
-          <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
+          <div className="contact-heading">
+            <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
+            {storeStatus ? (
+              <span className={`store-status-badge ${storeStatus.open ? 'open' : 'closed'}`}>
+                <i className="fa-solid fa-circle" /> {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
+              </span>
+            ) : null}
+          </div>
           <div className="contact-info">
-            <p><i className="fa-solid fa-location-dot" /> {storeInfo.storeAddress}</p>
+            <p>
+              <i className="fa-solid fa-location-dot" />{' '}
+              <a href={MAP_DIRECTIONS_URL} target="_blank" rel="noopener noreferrer">{storeInfo.storeAddress}</a>
+            </p>
             <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
             <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
             <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
             <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
+            <p className="order-cutoff-note">
+              <i className="fa-solid fa-triangle-exclamation" />{' '}
+              {storeStatus?.pastCutoff
+                ? 'Ya pasaron las 19:00, así que los pedidos de hoy se toman en cuenta recién mañana.'
+                : 'Los pedidos hechos después de las 19:00 se toman en cuenta a partir del día siguiente.'}
+            </p>
           </div>
 
           <div className="map-container">

@@ -237,6 +237,33 @@ main h2 i { color: var(--crate); }
   margin-bottom: 28px;
 }
 
+.category-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.category-filter-btn {
+  background: #fff;
+  border: 1px solid #ddd4bb;
+  color: var(--ink);
+  padding: 8px 18px;
+  border-radius: 30px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.category-filter-btn:hover { background: var(--paper-dark); }
+
+.category-filter-btn.active {
+  background: var(--leaf);
+  border-color: var(--leaf);
+  color: white;
+}
+
 .show-more-btn {
   display: block;
   margin: 24px auto 0;
@@ -356,6 +383,41 @@ main h2 i { color: var(--crate); }
 }
 
 .add-to-cart-btn .fa-solid { margin-right: 6px; }
+
+.grid-qty-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  background: var(--paper-dark);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.grid-qty-controls button {
+  background: var(--leaf);
+  color: white;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.grid-qty-controls button:hover { background: var(--leaf-dark); }
+
+.grid-qty-controls span {
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
 
 .cart-drawer-overlay {
   position: fixed;
@@ -718,6 +780,36 @@ main h2 i { color: var(--crate); }
   box-shadow: var(--box-shadow);
 }
 
+.contact-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.store-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 30px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.store-status-badge i { font-size: 0.55rem; }
+
+.store-status-badge.open {
+  background: rgba(63, 107, 68, 0.12);
+  color: var(--leaf-dark);
+}
+
+.store-status-badge.closed {
+  background: rgba(193, 67, 46, 0.12);
+  color: var(--radish);
+}
+
 .contact-info {
   margin-top: 20px;
 }
@@ -735,6 +827,13 @@ main h2 i { color: var(--crate); }
   color: var(--crate);
   width: 20px;
 }
+
+.order-cutoff-note {
+  color: #6c7a6a;
+  font-size: 0.88rem;
+}
+
+.order-cutoff-note i { color: var(--crate); }
 
 .form-group input,
 .form-group textarea {
@@ -919,6 +1018,17 @@ button {
 }
 
 .product-item-actions button { margin-left: 10px; }
+
+.category-tag {
+  display: inline-block;
+  background: var(--paper-dark);
+  color: var(--crate-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  vertical-align: middle;
+}
 
 .edit-btn { background-color: #3498db; color: white; }
 .edit-btn:hover { background-color: #2980b9; }
