@@ -36,7 +36,6 @@ Completá:
 - `TRANSFER_ALIAS` / `TRANSFER_CBU`: los datos que se le muestran al cliente para transferir.
 - `WHATSAPP_NUMBER`: tu número con código de país, sin espacios ni signos (ej: `5493511234567`).
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`: para subir imágenes comprimidas a Supabase Storage desde el panel.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `CONTACT_TO_EMAIL` y opcionalmente `CONTACT_FROM_EMAIL`: para que el formulario de contacto mande correo real por SMTP.
 
 ## Prisma
 
@@ -103,4 +102,3 @@ Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya so
 - El panel sigue usando token en `localStorage` y JWT firmado por el backend.
 - El checkout sigue siendo por transferencia manual; Mercado Pago queda para una etapa posterior.
 - Las imágenes de productos se comprimen en el navegador a WebP y se suben a Supabase Storage para ahorrar espacio.
-- El formulario de contacto manda correo real solo si configurás SMTP en las variables de entorno.

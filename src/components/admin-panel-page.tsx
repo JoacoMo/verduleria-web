@@ -85,6 +85,7 @@ export default function AdminPanelPage() {
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authorized'>('checking');
 
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
@@ -129,6 +130,7 @@ export default function AdminPanelPage() {
 
       if (productsResponse.ok) setProducts(await productsResponse.json());
       if (ordersResponse.ok) setOrders(await ordersResponse.json());
+      setAuthStatus('authorized');
     } catch (error) {
       console.error('Error loading admin data:', error);
     }
@@ -291,6 +293,16 @@ export default function AdminPanelPage() {
     router.push('/login');
   }
 
+  if (authStatus === 'checking') {
+    return (
+      <main className="admin-page">
+        <div className="panel-shell">
+          <p style={{ textAlign: 'center', color: '#6c7a6a' }}>Verificando sesión...</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="admin-page">
       <div className="panel-shell">
@@ -319,17 +331,17 @@ export default function AdminPanelPage() {
               </select>
             </div>
             <div className="form-group">
-              <label htmlFor="product-image">URL de la Imagen:</label>
-              <input id="product-image" type="url" required value={form.image} onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))} />
+              <label htmlFor="product-image">URL de la Imagen (opcional):</label>
+              <input id="product-image" type="url" value={form.image} onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))} />
             </div>
             <div className="form-group">
-              <label htmlFor="product-image-file">O subir imagen:</label>
+              <label htmlFor="product-image-file">O subir imagen (opcional):</label>
               <input id="product-image-file" type="file" accept="image/*" onChange={handleImageSelect} />
               <p style={{ margin: '8px 0 0', color: '#6c7a6a', fontSize: '0.92rem' }}>
                 Se comprime en el navegador y se sube como WebP para ahorrar almacenamiento.
               </p>
               <p style={{ margin: '6px 0 0', color: '#6c7a6a', fontSize: '0.85rem' }}>
-                {imageUploadLoading ? 'Procesando imagen...' : form.image ? 'Imagen lista para guardar.' : 'Si no subís archivo, podés pegar una URL manual.'}
+                {imageUploadLoading ? 'Procesando imagen...' : form.image ? 'Imagen lista para guardar.' : 'Si no cargás una imagen, se muestra una imagen genérica.'}
               </p>
               {imagePreview ? (
                 <img
@@ -353,7 +365,7 @@ export default function AdminPanelPage() {
           {products.map((product) => (
             <div className="product-item" key={product.id}>
               <div className="product-item-info">
-                <img src={product.image} alt={product.name} onError={(event) => { event.currentTarget.src = 'https://via.placeholder.com/60'; }} />
+                <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                 <div>
                   <strong>{product.name}</strong>
                   <br />

@@ -4,3 +4,6 @@ node_modules
 
 # Ignorar variables de entorno, contienen secretos como la contraseña de la BD
 .env
+
+# Configuración local de Claude Code (permisos específicos de la máquina/sesión)
+.claude/settings.local.json
