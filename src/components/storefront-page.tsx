@@ -9,6 +9,15 @@ import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, 
 type CartItem = Product & { quantity: number };
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
+const INITIAL_VISIBLE_PRODUCTS = 8;
+
+function stripAccents(text: string) {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function matchesSearch(productName: string, query: string) {
+  return stripAccents(productName).toLowerCase().includes(stripAccents(query).toLowerCase());
+}
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'El Pampa',
@@ -33,6 +42,8 @@ export default function StorefrontPage() {
   const [isDelivery, setIsDelivery] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAllProducts, setShowAllProducts] = useState(false);
   const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
 
   useEffect(() => {
@@ -103,14 +114,18 @@ export default function StorefrontPage() {
   }
 
   function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
-    setCart((currentCart) => currentCart.flatMap((item) => {
-      if (item.id !== productId) return [item];
-      const normalizedDisplay = normalizeProductQuantity(displayValue, displayUnit);
-      if (normalizedDisplay <= 0) return [];
+    setCart((currentCart) => currentCart.map((item) => {
+      if (item.id !== productId) return item;
+      // Si el usuario resta hasta 0 (o escribe 0 a mano), no se saca el producto del
+      // carrito solo: puede ser un missclick y tendría que buscarlo de nuevo. Se clampea
+      // a la cantidad mínima; para sacarlo de verdad está el botón de la ×.
+      const normalizedDisplay = displayValue <= 0
+        ? PRODUCT_CART_STEP[displayUnit]
+        : normalizeProductQuantity(displayValue, displayUnit);
       const nativeQuantity = displayUnit === item.unit
         ? normalizedDisplay
         : item.unit === 'kg' ? normalizedDisplay / 1000 : normalizedDisplay * 1000;
-      return [{ ...item, quantity: Number(nativeQuantity.toFixed(3)) }];
+      return { ...item, quantity: Number(nativeQuantity.toFixed(3)) };
     }));
   }
 
@@ -123,6 +138,17 @@ export default function StorefrontPage() {
       return next;
     });
   }
+
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return products;
+    return products.filter((product) => matchesSearch(product.name, searchQuery));
+  }, [products, searchQuery]);
+
+  const isSearching = searchQuery.trim().length > 0;
+  const visibleProducts = isSearching || showAllProducts
+    ? filteredProducts
+    : filteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
+  const hasMoreProducts = !isSearching && !showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
 
   const relatedProducts = useMemo(() => {
     if (cart.length === 0) return [];
@@ -217,26 +243,54 @@ export default function StorefrontPage() {
       <main className="container">
         <h2><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
         <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
-        <div className="product-grid">
-          {products.map((product) => {
-            const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-            return (
-              <div className="product-card" key={product.id}>
-                <div className="product-card-image">
-                  <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                  <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
-                </div>
-                <div className="product-info">
-                  <h3>{product.name}</h3>
-                  <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                  <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
-                    <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+
+        <div className="search-bar">
+          <i className="fa-solid fa-magnifying-glass" />
+          <input
+            type="search"
+            placeholder="Buscar productos..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            aria-label="Buscar productos"
+          />
         </div>
+
+        {isSearching && filteredProducts.length === 0 ? (
+          <p className="no-results">No encontramos productos con &quot;{searchQuery}&quot;.</p>
+        ) : (
+          <div className="product-grid">
+            {visibleProducts.map((product) => {
+              const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+              return (
+                <div className="product-card" key={product.id}>
+                  <div className="product-card-image">
+                    <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
+                    <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
+                  </div>
+                  <div className="product-info">
+                    <h3>{product.name}</h3>
+                    <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
+                    <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
+                      <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {hasMoreProducts ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
+            Ver todos los productos ({filteredProducts.length})
+          </button>
+        ) : null}
+
+        {!isSearching && showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
+            Ver menos
+          </button>
+        ) : null}
 
         <section className="contact-section">
           <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
@@ -370,6 +424,11 @@ export default function StorefrontPage() {
           </div>
         </aside>
       </div>
+
+      <button type="button" className="cart-fab" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
+        <i className="fa-solid fa-cart-shopping" />
+        {cartCount > 0 ? <span className="cart-fab-count">{cartCount}</span> : null}
+      </button>
 
       <footer>
         <div className="container">
