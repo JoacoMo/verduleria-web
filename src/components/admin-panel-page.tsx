@@ -1,10 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { FormEvent } from 'react';
 import type { OrderRecord, Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
+import { matchesSearch } from '@/lib/search';
+
+const INITIAL_VISIBLE_PRODUCTS = 5;
+
+type ProductSort = 'alpha' | 'newest' | 'oldest';
 
 const DELIVERY_METHOD_LABELS: Record<OrderRecord['deliveryMethod'], string> = {
   pickup: 'Retiro en el local',
@@ -101,7 +106,9 @@ export default function AdminPanelPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<'checking' | 'authorized'>('checking');
   const [selectedDate, setSelectedDate] = useState<string>(() => getArgentinaToday());
-  const [deliveryProviderName, setDeliveryProviderName] = useState('Uber Moto');
+  const [productSearch, setProductSearch] = useState('');
+  const [productSort, setProductSort] = useState<ProductSort>('alpha');
+  const [showAllProducts, setShowAllProducts] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
@@ -111,13 +118,6 @@ export default function AdminPanelPage() {
     }
 
     void refreshData(token);
-
-    fetch('/api/store-info')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((info) => {
-        if (info?.deliveryProviderName) setDeliveryProviderName(info.deliveryProviderName);
-      })
-      .catch((error) => console.error('Error fetching store info:', error));
   }, [router]);
 
   async function getAuthHeaders() {
@@ -317,10 +317,49 @@ export default function AdminPanelPage() {
     }
   }
 
+  async function handleDeleteOrder(orderId: number) {
+    if (!confirm('¿Eliminar este pedido? Esta acción no se puede deshacer.')) return;
+
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders(),
+      });
+
+      if (await handleAuthError(response)) return;
+      await refreshData();
+    } catch (error) {
+      console.error('Error al eliminar pedido:', error);
+      alert('No se pudo eliminar el pedido.');
+    }
+  }
+
   function handleLogout() {
     localStorage.removeItem('adminToken');
     router.push('/login');
   }
+
+  const sortedFilteredProducts = useMemo(() => {
+    const filtered = productSearch.trim()
+      ? products.filter((product) => matchesSearch(product.name, productSearch))
+      : products;
+
+    const sorted = [...filtered];
+    if (productSort === 'alpha') {
+      sorted.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    } else if (productSort === 'newest') {
+      sorted.sort((a, b) => b.id - a.id);
+    } else {
+      sorted.sort((a, b) => a.id - b.id);
+    }
+    return sorted;
+  }, [products, productSearch, productSort]);
+
+  const isSearchingProducts = productSearch.trim().length > 0;
+  const visibleProducts = isSearchingProducts || showAllProducts
+    ? sortedFilteredProducts
+    : sortedFilteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
+  const hasMoreProducts = !isSearchingProducts && !showAllProducts && sortedFilteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
 
   if (authStatus === 'checking') {
     return (
@@ -390,33 +429,66 @@ export default function AdminPanelPage() {
         <hr />
 
         <h2>Productos Existentes</h2>
-        <div>
-          {products.map((product) => (
-            <div className="product-item" key={product.id}>
-              <div className="product-item-info">
-                <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                <div>
-                  <strong>{product.name}</strong>
-                  <br />
-                  ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
+
+        <div className="search-bar">
+          <i className="fa-solid fa-magnifying-glass" />
+          <input
+            type="search"
+            placeholder="Buscar productos..."
+            value={productSearch}
+            onChange={(event) => setProductSearch(event.target.value)}
+            aria-label="Buscar productos"
+          />
+        </div>
+
+        <div className="form-group" style={{ maxWidth: 260 }}>
+          <label htmlFor="product-sort">Ordenar por:</label>
+          <select id="product-sort" value={productSort} onChange={(event) => setProductSort(event.target.value as ProductSort)}>
+            <option value="alpha">Nombre (A-Z)</option>
+            <option value="newest">Más reciente primero</option>
+            <option value="oldest">Más antiguo primero</option>
+          </select>
+        </div>
+
+        {isSearchingProducts && sortedFilteredProducts.length === 0 ? (
+          <p className="no-results">No encontramos productos con &quot;{productSearch}&quot;.</p>
+        ) : (
+          <div>
+            {visibleProducts.map((product) => (
+              <div className="product-item" key={product.id}>
+                <div className="product-item-info">
+                  <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
+                  <div>
+                    <strong>{product.name}</strong>
+                    <br />
+                    ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
+                  </div>
+                </div>
+                <div className="product-item-actions">
+                  <button className="edit-btn" type="button" onClick={() => handleEdit(product.id)}>Editar</button>
+                  <button className="delete-btn" type="button" onClick={() => handleDelete(product.id)}>Eliminar</button>
                 </div>
               </div>
-              <div className="product-item-actions">
-                <button className="edit-btn" type="button" onClick={() => handleEdit(product.id)}>Editar</button>
-                <button className="delete-btn" type="button" onClick={() => handleDelete(product.id)}>Eliminar</button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+
+        {hasMoreProducts ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
+            Ver todos los productos ({sortedFilteredProducts.length})
+          </button>
+        ) : null}
+
+        {!isSearchingProducts && showAllProducts && sortedFilteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
+            Ver menos
+          </button>
+        ) : null}
 
         <hr />
 
         <h2>Pedidos</h2>
         <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. El sistema ya no descuenta stock porque los productos se venden por unidad de medida.</p>
-        <div className="delivery-notice">
-          <i className="fa-solid fa-triangle-exclamation" />
-          <span>Los precios y tiempos de envío están sujetos a variación, ya que las entregas se realizan mediante {deliveryProviderName}.</span>
-        </div>
 
         <div className="order-date-nav">
           <button type="button" onClick={() => goToDate(shiftDateParam(selectedDate, -1))}>◀ Día anterior</button>
@@ -447,12 +519,15 @@ export default function AdminPanelPage() {
                   <ul className="order-items-list">{itemsHtml}</ul>
                   <div><strong>Total: ${order.total.toFixed(2)}</strong></div>
                   <p className="order-delivery">{DELIVERY_METHOD_LABELS[order.deliveryMethod]}</p>
-                  {order.status === 'pending' ? (
-                    <div className="order-actions">
-                      <button className="confirm-order-btn" type="button" onClick={() => handleConfirmOrder(order.id)}>Confirmar pago</button>
-                      <button className="cancel-order-btn" type="button" onClick={() => handleCancelOrder(order.id)}>Cancelar</button>
-                    </div>
-                  ) : null}
+                  <div className="order-actions">
+                    {order.status === 'pending' ? (
+                      <>
+                        <button className="confirm-order-btn" type="button" onClick={() => handleConfirmOrder(order.id)}>Confirmar pago</button>
+                        <button className="cancel-order-btn" type="button" onClick={() => handleCancelOrder(order.id)}>Cancelar</button>
+                      </>
+                    ) : null}
+                    <button className="delete-btn" type="button" onClick={() => handleDeleteOrder(order.id)}>Eliminar</button>
+                  </div>
                 </div>
               </div>
             );

@@ -5,19 +5,12 @@ import Link from 'next/link';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
 import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
+import { matchesSearch } from '@/lib/search';
 
 type CartItem = Product & { quantity: number };
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 const INITIAL_VISIBLE_PRODUCTS = 8;
-
-function stripAccents(text: string) {
-  return text.normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-
-function matchesSearch(productName: string, query: string) {
-  return stripAccents(productName).toLowerCase().includes(stripAccents(query).toLowerCase());
-}
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'El Pampa',
