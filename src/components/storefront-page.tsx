@@ -134,11 +134,16 @@ export default function StorefrontPage() {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
     const step = PRODUCT_CART_STEP[product.unit];
+    const alreadyInCart = cart.some((item) => item.id === productId);
+
+    if (!alreadyInCart) {
+      if (direction < 0) return;
+      setToastMessage(`${product.name} agregado al carrito`);
+    }
 
     setCart((currentCart) => {
       const itemIndex = currentCart.findIndex((item) => item.id === productId);
       if (itemIndex < 0) {
-        if (direction < 0) return currentCart;
         return [...currentCart, { ...product, quantity: PRODUCT_DEFAULT_CART_QUANTITY[product.unit] }];
       }
 
@@ -333,17 +338,11 @@ export default function StorefrontPage() {
                   <div className="product-info">
                     <h3>{product.name}</h3>
                     <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                    {cartItem ? (
-                      <div className="grid-qty-controls">
-                        <button type="button" onClick={() => adjustGridQuantity(product.id, -1)} aria-label={`Sacar ${product.name}`}>-</button>
-                        <span>{formatProductQuantity(cartItem.quantity, product.unit)}</span>
-                        <button type="button" onClick={() => adjustGridQuantity(product.id, 1)} aria-label={`Agregar más ${product.name}`}>+</button>
-                      </div>
-                    ) : (
-                      <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
-                        <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
-                      </button>
-                    )}
+                    <div className="grid-qty-controls">
+                      <button type="button" disabled={!cartItem} onClick={() => adjustGridQuantity(product.id, -1)} aria-label={`Sacar ${product.name}`}>-</button>
+                      <span>{formatProductQuantity(cartItem ? cartItem.quantity : defaultQuantity, product.unit)}</span>
+                      <button type="button" onClick={() => adjustGridQuantity(product.id, 1)} aria-label={`Agregar ${product.name}`}>+</button>
+                    </div>
                   </div>
                 </div>
               );
@@ -411,6 +410,26 @@ export default function StorefrontPage() {
             <button type="button" className="cart-drawer-close" onClick={() => setIsCartOpen(false)} aria-label="Cerrar carrito">&times;</button>
           </div>
 
+          {orderConfirmation ? (
+            <div className="cart-drawer-body">
+              <div className="order-confirmation">
+                <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
+                <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
+                <ul className="transfer-details">
+                  <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
+                  {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
+                </ul>
+                <p>Ya te abrimos WhatsApp con el detalle del pedido. Cuando hagas la transferencia, mandanos el comprobante por ahí.</p>
+                <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
+                  <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
+                </a>
+                <button type="button" className="continue-shopping-btn" onClick={() => setOrderConfirmation(null)}>
+                  ¿Querés hacer otro pedido? Seguir comprando
+                </button>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="cart-drawer-body">
             {cart.length === 0 ? (
               <p>Tu carrito está vacío.</p>
@@ -493,22 +512,9 @@ export default function StorefrontPage() {
             ) : null}
             <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
             <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>Pedir por transferencia</button>
-
-            {orderConfirmation ? (
-              <div className="order-confirmation">
-                <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
-                <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
-                <ul className="transfer-details">
-                  <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
-                  {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
-                </ul>
-                <p>Ya te abrimos WhatsApp con el detalle del pedido. Cuando hagas la transferencia, mandanos el comprobante por ahí.</p>
-                <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
-                  <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
-                </a>
-              </div>
-            ) : null}
           </div>
+          </>
+          )}
         </aside>
       </div>
 
