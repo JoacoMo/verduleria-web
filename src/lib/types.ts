@@ -17,11 +17,14 @@ export type OrderItem = {
   unit: ProductUnit;
 };
 
+export type DeliveryMethod = 'pickup' | 'delivery';
+
 export type OrderRecord = {
   id: number;
   items: OrderItem[];
   total: number;
   status: 'pending' | 'paid' | 'cancelled' | 'failed';
+  deliveryMethod: DeliveryMethod;
   customerName: string | null;
   customerPhone: string | null;
   createdAt?: string;
@@ -38,6 +41,9 @@ export type StoreInfo = {
   transferAlias: string;
   transferCbu: string;
   whatsappNumber: string;
+  deliveryProviderName: string;
+  deliveryMaxWeightKg: number;
+  deliveryMinPurchase: number;
 };
 
 export type ProductPayload = {

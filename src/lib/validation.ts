@@ -40,11 +40,7 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
   }
 
   if (!partial || body.image !== undefined) {
-    const image = typeof body.image === 'string' ? body.image.trim() : '';
-    if (!image) {
-      throw new Error('La URL de la imagen es obligatoria.');
-    }
-    data.image = image;
+    data.image = typeof body.image === 'string' ? body.image.trim() : '';
   }
 
   if (!partial || body.unit !== undefined) {

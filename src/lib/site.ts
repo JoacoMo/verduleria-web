@@ -11,4 +11,7 @@ export const siteConfig = {
   transferCbu: process.env.TRANSFER_CBU || '',
   whatsappNumber: process.env.WHATSAPP_NUMBER || '5493517656500',
   contactEmail: 'gastaldo50@gmail.com',
+  deliveryProviderName: process.env.DELIVERY_PROVIDER_NAME || 'Uber Moto',
+  deliveryMaxWeightKg: Number(process.env.DELIVERY_MAX_WEIGHT_KG) || 7,
+  deliveryMinPurchase: Number(process.env.DELIVERY_MIN_PURCHASE) || 10000,
 };

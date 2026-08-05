@@ -1,13 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
+import Link from 'next/link';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
+import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
 
 type CartItem = Product & { quantity: number };
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
+const INITIAL_VISIBLE_PRODUCTS = 8;
+
+function stripAccents(text: string) {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function matchesSearch(productName: string, query: string) {
+  return stripAccents(productName).toLowerCase().includes(stripAccents(query).toLowerCase());
+}
 
 const DEFAULT_STORE_INFO: StoreInfo = {
   storeName: 'El Pampa',
@@ -19,6 +29,9 @@ const DEFAULT_STORE_INFO: StoreInfo = {
   transferAlias: 'jgastaldo',
   transferCbu: '',
   whatsappNumber: '5493517656500',
+  deliveryProviderName: 'Uber Moto',
+  deliveryMaxWeightKg: 7,
+  deliveryMinPurchase: 10000,
 };
 
 export default function StorefrontPage() {
@@ -26,10 +39,27 @@ export default function StorefrontPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [storeInfo, setStoreInfo] = useState<StoreInfo>(DEFAULT_STORE_INFO);
   const [orderConfirmation, setOrderConfirmation] = useState<OrderConfirmation | null>(null);
-  const [contactForm, setContactForm] = useState({ name: '', email: '', message: '' });
-  const [contactSuccess, setContactSuccess] = useState(false);
   const [isDelivery, setIsDelivery] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAllProducts, setShowAllProducts] = useState(false);
   const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
+
+  useEffect(() => {
+    if (!isCartOpen) return;
+
+    document.body.style.overflow = 'hidden';
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setIsCartOpen(false);
+    }
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCartOpen]);
 
   useEffect(() => {
     async function fetchProducts() {
@@ -59,6 +89,7 @@ export default function StorefrontPage() {
 
   const cartCount = useMemo(() => cart.length, [cart]);
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
+  const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
 
   function addToCart(productId: number) {
     const product = products.find((item) => item.id === productId);
@@ -82,18 +113,48 @@ export default function StorefrontPage() {
     });
   }
 
-  function updateCartQuantity(productId: number, quantity: number) {
-    setCart((currentCart) => currentCart.flatMap((item) => {
-      if (item.id !== productId) return [item];
-      const normalizedQuantity = normalizeProductQuantity(quantity, item.unit);
-      if (normalizedQuantity <= 0) return [];
-      return [{ ...item, quantity: normalizedQuantity }];
+  function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
+    setCart((currentCart) => currentCart.map((item) => {
+      if (item.id !== productId) return item;
+      // Si el usuario resta hasta 0 (o escribe 0 a mano), no se saca el producto del
+      // carrito solo: puede ser un missclick y tendría que buscarlo de nuevo. Se clampea
+      // a la cantidad mínima; para sacarlo de verdad está el botón de la ×.
+      const normalizedDisplay = displayValue <= 0
+        ? PRODUCT_CART_STEP[displayUnit]
+        : normalizeProductQuantity(displayValue, displayUnit);
+      const nativeQuantity = displayUnit === item.unit
+        ? normalizedDisplay
+        : item.unit === 'kg' ? normalizedDisplay / 1000 : normalizedDisplay * 1000;
+      return { ...item, quantity: Number(nativeQuantity.toFixed(3)) };
     }));
   }
 
   function removeFromCart(productId: number) {
     setCart((currentCart) => currentCart.filter((item) => item.id !== productId));
+    setUnitModes((current) => {
+      if (!(productId in current)) return current;
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
   }
+
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return products;
+    return products.filter((product) => matchesSearch(product.name, searchQuery));
+  }, [products, searchQuery]);
+
+  const isSearching = searchQuery.trim().length > 0;
+  const visibleProducts = isSearching || showAllProducts
+    ? filteredProducts
+    : filteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
+  const hasMoreProducts = !isSearching && !showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
+
+  const relatedProducts = useMemo(() => {
+    if (cart.length === 0) return [];
+    const cartIds = new Set(cart.map((item) => item.id));
+    return products.filter((product) => !cartIds.has(product.id)).slice(0, 4);
+  }, [products, cart]);
 
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
     const lines = items.map((item) => {
@@ -102,60 +163,59 @@ export default function StorefrontPage() {
     }).join('%0A');
     
     const deliveryText = isDelivery ? 'Quiero que me lo envíen a domicilio.' : 'Voy a pasar a retirarlo.';
-    const deliveryWarning = isDelivery && totalWeight > 7 ? '%0A%0A⚠️ *Nota:* Tu pedido pesa más de 7kg. Tené en cuenta que para Uber Moto el máximo suele ser 7-8kg.' : '';
+    const maxWeight = storeInfo.deliveryMaxWeightKg;
+    const deliveryWarning = isDelivery && totalWeight > maxWeight
+      ? `%0A%0A⚠️ *Nota:* Tu pedido pesa más de ${maxWeight}kg. Tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
+      : '';
 
     const text =
-      `Hola! Quiero confirmar el pago del pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
+      `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
       `${lines}%0A%0A` +
       `Total: $${total.toFixed(2)}%0A%0A` +
       `*Entrega:* ${deliveryText}${deliveryWarning}%0A%0A` +
-      'Ya hice la transferencia, te mando el comprobante:';
+      'Ya hago la transferencia y les mando el comprobante por acá.';
     return `https://wa.me/${storeInfo.whatsappNumber}?text=${text}`;
   }
 
   async function handleCheckout() {
     if (cart.length === 0) return;
 
+    // Se abre una pestaña en blanco de forma síncrona (dentro del gesto del click)
+    // para evitar que el navegador bloquee el popup al redirigirla después del fetch.
+    const waTab = window.open('', '_blank');
+
     try {
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })) }),
+        body: JSON.stringify({
+          cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
+          isDelivery,
+        }),
       });
 
       const result = await response.json();
       if (!response.ok) {
+        waTab?.close();
         alert(result.error || 'Hubo un problema al procesar el pedido.');
         return;
       }
 
-      setOrderConfirmation({ ...result, items: cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit })) });
-      setCart([]);
-    } catch (error) {
-      console.error('Error en el checkout:', error);
-      alert('No se pudo registrar el pedido. Inténtalo de nuevo.');
-    }
-  }
+      const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
+      setOrderConfirmation({ ...result, items });
 
-  async function handleContactSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    try {
-      const response = await fetch('/api/contact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contactForm),
-      });
-
-      if (!response.ok) {
-        throw new Error('No se pudo enviar el mensaje.');
+      const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
+      if (waTab) {
+        waTab.location.href = waLink;
+      } else {
+        window.open(waLink, '_blank', 'noopener,noreferrer');
       }
 
-      setContactForm({ name: '', email: '', message: '' });
-      setContactSuccess(true);
+      setCart([]);
     } catch (error) {
-      console.error('Error al enviar contacto:', error);
-      alert('No se pudo enviar el mensaje. Probá de nuevo más tarde.');
+      waTab?.close();
+      console.error('Error en el checkout:', error);
+      alert('No se pudo registrar el pedido. Inténtalo de nuevo.');
     }
   }
 
@@ -170,10 +230,10 @@ export default function StorefrontPage() {
             </svg>
             <p className="hero-tagline">Verdulería y frutería en Barrio General Paz, Córdoba Capital. Pedí por kilo, gramos o unidad y coordinamos retiro o envío.</p>
           </div>
-          <div className="cart-icon">
+          <button type="button" className="cart-icon" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
             <i className="fa-solid fa-cart-shopping" />
             <span id="cart-count">{cartCount}</span>
-          </div>
+          </button>
         </div>
         <svg className="header-edge" viewBox="0 0 1200 26" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M0,0 L0,14 L30,22 L60,10 L90,20 L120,8 L150,18 L180,6 L210,16 L240,4 L270,14 L300,22 L330,10 L360,20 L390,8 L420,18 L450,6 L480,16 L510,4 L540,14 L570,22 L600,10 L630,20 L660,8 L690,18 L720,6 L750,16 L780,4 L810,14 L840,22 L870,10 L900,20 L930,8 L960,18 L990,6 L1020,16 L1050,4 L1080,14 L1110,22 L1140,10 L1170,20 L1200,8 L1200,26 L0,26 Z" fill="#FAF6EC" />
@@ -183,118 +243,63 @@ export default function StorefrontPage() {
       <main className="container">
         <h2><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
         <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
-        <div className="product-grid">
-          {products.map((product) => {
-            const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-            return (
-              <div className="product-card" key={product.id}>
-                <div className="product-card-image">
-                  <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                  <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
-                </div>
-                <div className="product-info">
-                  <h3>{product.name}</h3>
-                  <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                  <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
-                    <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+
+        <div className="search-bar">
+          <i className="fa-solid fa-magnifying-glass" />
+          <input
+            type="search"
+            placeholder="Buscar productos..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            aria-label="Buscar productos"
+          />
         </div>
 
-        <section className="shopping-cart-section">
-          <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-cart-shopping" /> Tu Carrito</h2>
-          <div id="cart-items">
-            {cart.length === 0 ? (
-              <p>Tu carrito está vacío.</p>
-            ) : (
-              cart.map((item) => (
-                <div className="cart-item" key={item.id}>
-                  <div className="cart-item-info">
-                    <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                    <div>
-                      <strong>{item.name}</strong>
-                      <p>${item.price.toFixed(2)} x {formatProductQuantity(item.quantity, item.unit)}</p>
-                    </div>
+        {isSearching && filteredProducts.length === 0 ? (
+          <p className="no-results">No encontramos productos con &quot;{searchQuery}&quot;.</p>
+        ) : (
+          <div className="product-grid">
+            {visibleProducts.map((product) => {
+              const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+              return (
+                <div className="product-card" key={product.id}>
+                  <div className="product-card-image">
+                    <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
+                    <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <label style={{ fontSize: '0.85rem', color: '#6c7a6a' }}>
-                      {item.unit === 'kg' ? 'Kilogramos' : item.unit === 'g' ? 'Gramos' : 'Unidades'}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                        <button
-                          type="button"
-                          onClick={() => updateCartQuantity(item.id, item.quantity - PRODUCT_CART_STEP[item.unit])}
-                          style={{ padding: '4px 8px' }}
-                        >
-                          -
-                        </button>
-                        <input
-                          type="number"
-                          min={PRODUCT_CART_STEP[item.unit]}
-                          step={PRODUCT_CART_STEP[item.unit]}
-                          value={item.quantity}
-                          onChange={(event) => updateCartQuantity(item.id, Number(event.target.value))}
-                          style={{ width: 60, textAlign: 'center' }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => updateCartQuantity(item.id, item.quantity + PRODUCT_CART_STEP[item.unit])}
-                          style={{ padding: '4px 8px' }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </label>
-                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)} title="Eliminar producto">&times;</button>
+                  <div className="product-info">
+                    <h3>{product.name}</h3>
+                    <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
+                    <button className="add-to-cart-btn" onClick={() => addToCart(product.id)}>
+                      <i className="fa-solid fa-cart-plus" /> Agregar {formatProductQuantity(defaultQuantity, product.unit)}
+                    </button>
                   </div>
                 </div>
-              ))
-            )}
+              );
+            })}
           </div>
-          <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-          <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0}>Pedir por transferencia</button>
+        )}
 
-          {orderConfirmation ? (
-            <div className="order-confirmation">
-              <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
-              <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
-              <ul className="transfer-details">
-                <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
-                {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
-              </ul>
-              <p>Después mandanos el comprobante por WhatsApp con el número de pedido, y en cuanto lo confirmemos preparamos tu compra.</p>
-              <a className="whatsapp-btn" href={buildWhatsappMessage(orderConfirmation.items, orderConfirmation.orderId, orderConfirmation.total, isDelivery, totalWeight)} target="_blank" rel="noopener noreferrer">
-                <i className="fa-brands fa-whatsapp" /> Enviar comprobante por WhatsApp
-              </a>
-            </div>
-          ) : null}
-        </section>
+        {hasMoreProducts ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
+            Ver todos los productos ({filteredProducts.length})
+          </button>
+        ) : null}
+
+        {!isSearching && showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
+          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
+            Ver menos
+          </button>
+        ) : null}
 
         <section className="contact-section">
-          <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-envelope" /> Contacto</h2>
-          <div className="contact-grid">
-            <div className="contact-info">
-              <p><i className="fa-solid fa-location-dot" /> {storeInfo.storeAddress}</p>
-              <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
-              <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
-              <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
-              <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
-            </div>
-            <form className="contact-form" onSubmit={handleContactSubmit}>
-              <div className="form-group">
-                <input type="text" placeholder="Tu nombre" required value={contactForm.name} onChange={(event) => setContactForm((current) => ({ ...current, name: event.target.value }))} />
-              </div>
-              <div className="form-group">
-                <input type="email" placeholder="Tu email" required value={contactForm.email} onChange={(event) => setContactForm((current) => ({ ...current, email: event.target.value }))} />
-              </div>
-              <div className="form-group">
-                <textarea rows={4} placeholder="Tu mensaje" required value={contactForm.message} onChange={(event) => setContactForm((current) => ({ ...current, message: event.target.value }))} />
-              </div>
-              <button type="submit" className="contact-submit-btn">Enviar mensaje</button>
-              {contactSuccess ? <p style={{ color: 'var(--leaf)', fontWeight: 600 }}>¡Mensaje enviado! Te vamos a responder pronto.</p> : null}
-            </form>
+          <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
+          <div className="contact-info">
+            <p><i className="fa-solid fa-location-dot" /> {storeInfo.storeAddress}</p>
+            <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
+            <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
+            <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
+            <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
           </div>
 
           <div className="map-container">
@@ -312,9 +317,126 @@ export default function StorefrontPage() {
         </section>
       </main>
 
+      <div className={`cart-drawer-overlay ${isCartOpen ? 'open' : ''}`} onClick={() => setIsCartOpen(false)}>
+        <aside className="cart-drawer" onClick={(event) => event.stopPropagation()}>
+          <div className="cart-drawer-header">
+            <h2><i className="fa-solid fa-cart-shopping" /> Tu carrito</h2>
+            <button type="button" className="cart-drawer-close" onClick={() => setIsCartOpen(false)} aria-label="Cerrar carrito">&times;</button>
+          </div>
+
+          <div className="cart-drawer-body">
+            {cart.length === 0 ? (
+              <p>Tu carrito está vacío.</p>
+            ) : (
+              cart.map((item) => {
+                const displayUnit = item.unit === 'unidad' ? 'unidad' : (unitModes[item.id] ?? item.unit);
+                const displayQuantity = displayUnit === item.unit
+                  ? item.quantity
+                  : item.unit === 'kg' ? item.quantity * 1000 : item.quantity / 1000;
+                const step = PRODUCT_CART_STEP[displayUnit];
+
+                return (
+                  <div className="cart-drawer-item" key={item.id}>
+                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)} title="Sacar producto">&times;</button>
+                    <div className="cart-item-info">
+                      <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
+                      <div>
+                        <strong>{item.name}</strong>
+                        <p>${item.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[item.unit]} — ${(item.price * item.quantity).toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    <div className="cart-item-controls">
+                      {item.unit !== 'unidad' ? (
+                        <div className="unit-toggle">
+                          <button type="button" className={displayUnit === 'kg' ? 'active' : ''} onClick={() => setUnitModes((current) => ({ ...current, [item.id]: 'kg' }))}>kg</button>
+                          <button type="button" className={displayUnit === 'g' ? 'active' : ''} onClick={() => setUnitModes((current) => ({ ...current, [item.id]: 'g' }))}>g</button>
+                        </div>
+                      ) : null}
+                      <div className="qty-controls">
+                        <button type="button" onClick={() => updateCartQuantityInUnit(item.id, displayQuantity - step, displayUnit)}>-</button>
+                        <input
+                          type="number"
+                          min={step}
+                          step={step}
+                          value={displayQuantity}
+                          onChange={(event) => updateCartQuantityInUnit(item.id, Number(event.target.value), displayUnit)}
+                        />
+                        <button type="button" onClick={() => updateCartQuantityInUnit(item.id, displayQuantity + step, displayUnit)}>+</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {relatedProducts.length > 0 ? (
+              <div className="related-products">
+                <h3>También te puede interesar</h3>
+                <div className="related-products-list">
+                  {relatedProducts.map((product) => (
+                    <div className="related-product-card" key={product.id}>
+                      <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
+                      <div>
+                        <strong>{product.name}</strong>
+                        <p>${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</p>
+                      </div>
+                      <button type="button" onClick={() => addToCart(product.id)}>+ Agregar</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="cart-drawer-footer">
+            <div className="delivery-toggle">
+              <button type="button" className={!isDelivery ? 'active' : ''} onClick={() => setIsDelivery(false)}>Retiro en el local</button>
+              <button type="button" className={isDelivery ? 'active' : ''} onClick={() => setIsDelivery(true)}>Envío ({storeInfo.deliveryProviderName})</button>
+            </div>
+            <div className="delivery-notice">
+              <i className="fa-solid fa-triangle-exclamation" />
+              <span>Los precios y tiempos de envío están sujetos a variación, ya que las entregas se realizan mediante {storeInfo.deliveryProviderName}.</span>
+            </div>
+            {belowDeliveryMinimum ? (
+              <div className="delivery-notice delivery-notice-warning">
+                <i className="fa-solid fa-circle-exclamation" />
+                <span>Para envío el pedido mínimo es ${storeInfo.deliveryMinPurchase.toFixed(2)} — te faltan ${(storeInfo.deliveryMinPurchase - cartTotal).toFixed(2)}, o elegí retiro en el local.</span>
+              </div>
+            ) : null}
+            <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
+            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>Pedir por transferencia</button>
+
+            {orderConfirmation ? (
+              <div className="order-confirmation">
+                <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
+                <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
+                <ul className="transfer-details">
+                  <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
+                  {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
+                </ul>
+                <p>Ya te abrimos WhatsApp con el detalle del pedido. Cuando hagas la transferencia, mandanos el comprobante por ahí.</p>
+                <a className="whatsapp-btn" href={buildWhatsappMessage(orderConfirmation.items, orderConfirmation.orderId, orderConfirmation.total, isDelivery, totalWeight)} target="_blank" rel="noopener noreferrer">
+                  <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
+                </a>
+              </div>
+            ) : null}
+          </div>
+        </aside>
+      </div>
+
+      <button type="button" className="cart-fab" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
+        <i className="fa-solid fa-cart-shopping" />
+        {cartCount > 0 ? <span className="cart-fab-count">{cartCount}</span> : null}
+      </button>
+
       <footer>
         <div className="container">
           <p>&copy; 2026 El Pampa. Verdulería y frutería en Barrio General Paz, Córdoba Capital.</p>
+          <div className="footer-links">
+            <Link href="/terminos">Términos y Condiciones</Link>
+            <Link href="/privacidad">Política de Privacidad</Link>
+          </div>
         </div>
       </footer>
     </>

@@ -17,10 +17,10 @@ const DEFAULT_PRODUCTS_FALLBACK = [
 
 export async function GET() {
   try {
-    const products = await prisma.product.findMany({ orderBy: { id: 'asc' } });
+    const products = await prisma.product.findMany({ orderBy: { name: 'asc' } });
     if (products.length === 0) {
       await prisma.product.createMany({ data: DEFAULT_PRODUCT_SEED });
-      const seededProducts = await prisma.product.findMany({ orderBy: { id: 'asc' } });
+      const seededProducts = await prisma.product.findMany({ orderBy: { name: 'asc' } });
       return NextResponse.json(seededProducts);
     }
     return NextResponse.json(products);

@@ -17,6 +17,11 @@ export const metadata: Metadata = {
     'verdulería Barrio General Paz',
     'frutería Córdoba',
     'frutas y verduras a domicilio',
+    'verdulería cerca de mí',
+    'verdulería online Córdoba',
+    'frutas y verduras a domicilio Córdoba',
+    'envío de verduras Barrio General Paz',
+    'comprar verdura online Córdoba Capital',
   ],
   openGraph: {
     title: `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`,

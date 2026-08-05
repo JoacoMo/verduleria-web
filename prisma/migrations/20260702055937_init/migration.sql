@@ -4,7 +4,7 @@ CREATE TABLE "Product" (
     "name" TEXT NOT NULL,
     "price" DOUBLE PRECISION NOT NULL,
     "image" TEXT NOT NULL,
-    "stock" INTEGER NOT NULL DEFAULT 0,
+    "unit" TEXT NOT NULL DEFAULT 'kg',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")

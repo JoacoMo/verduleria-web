@@ -22,10 +22,13 @@ model Order {
   items          Json // [{ id, name, price, quantity }]
   total          Float
   status         String   @default("pending") // pending | paid | failed
+  deliveryMethod String   @default("pickup") // pickup | delivery
   mpPreferenceId String?
   mpPaymentId    String?
   customerName   String?
   customerPhone  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([createdAt])
 }
