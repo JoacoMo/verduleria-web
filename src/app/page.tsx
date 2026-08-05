@@ -32,6 +32,7 @@ const localBusinessSchema = {
   },
   areaServed: [siteConfig.storeNeighborhood, 'Córdoba Capital'],
   telephone: siteConfig.whatsappNumber ? `+${siteConfig.whatsappNumber}` : undefined,
+  priceRange: '$$',
 };
 
 export default function Page() {
