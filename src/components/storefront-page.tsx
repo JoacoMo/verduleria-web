@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
 import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
@@ -19,6 +20,9 @@ const DEFAULT_STORE_INFO: StoreInfo = {
   transferAlias: 'jgastaldo',
   transferCbu: '',
   whatsappNumber: '5493517656500',
+  deliveryProviderName: 'Uber Moto',
+  deliveryMaxWeightKg: 7,
+  deliveryMinPurchase: 10000,
 };
 
 export default function StorefrontPage() {
@@ -74,6 +78,7 @@ export default function StorefrontPage() {
 
   const cartCount = useMemo(() => cart.length, [cart]);
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
+  const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
 
   function addToCart(productId: number) {
     const product = products.find((item) => item.id === productId);
@@ -132,7 +137,10 @@ export default function StorefrontPage() {
     }).join('%0A');
     
     const deliveryText = isDelivery ? 'Quiero que me lo envíen a domicilio.' : 'Voy a pasar a retirarlo.';
-    const deliveryWarning = isDelivery && totalWeight > 7 ? '%0A%0A⚠️ *Nota:* Tu pedido pesa más de 7kg. Tené en cuenta que para Uber Moto el máximo suele ser 7-8kg.' : '';
+    const maxWeight = storeInfo.deliveryMaxWeightKg;
+    const deliveryWarning = isDelivery && totalWeight > maxWeight
+      ? `%0A%0A⚠️ *Nota:* Tu pedido pesa más de ${maxWeight}kg. Tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
+      : '';
 
     const text =
       `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
@@ -154,7 +162,10 @@ export default function StorefrontPage() {
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })) }),
+        body: JSON.stringify({
+          cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
+          isDelivery,
+        }),
       });
 
       const result = await response.json();
@@ -325,8 +336,22 @@ export default function StorefrontPage() {
           </div>
 
           <div className="cart-drawer-footer">
+            <div className="delivery-toggle">
+              <button type="button" className={!isDelivery ? 'active' : ''} onClick={() => setIsDelivery(false)}>Retiro en el local</button>
+              <button type="button" className={isDelivery ? 'active' : ''} onClick={() => setIsDelivery(true)}>Envío ({storeInfo.deliveryProviderName})</button>
+            </div>
+            <div className="delivery-notice">
+              <i className="fa-solid fa-triangle-exclamation" />
+              <span>Los precios y tiempos de envío están sujetos a variación, ya que las entregas se realizan mediante {storeInfo.deliveryProviderName}.</span>
+            </div>
+            {belowDeliveryMinimum ? (
+              <div className="delivery-notice delivery-notice-warning">
+                <i className="fa-solid fa-circle-exclamation" />
+                <span>Para envío el pedido mínimo es ${storeInfo.deliveryMinPurchase.toFixed(2)} — te faltan ${(storeInfo.deliveryMinPurchase - cartTotal).toFixed(2)}, o elegí retiro en el local.</span>
+              </div>
+            ) : null}
             <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0}>Pedir por transferencia</button>
+            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>Pedir por transferencia</button>
 
             {orderConfirmation ? (
               <div className="order-confirmation">
@@ -349,6 +374,10 @@ export default function StorefrontPage() {
       <footer>
         <div className="container">
           <p>&copy; 2026 El Pampa. Verdulería y frutería en Barrio General Paz, Córdoba Capital.</p>
+          <div className="footer-links">
+            <Link href="/terminos">Términos y Condiciones</Link>
+            <Link href="/privacidad">Política de Privacidad</Link>
+          </div>
         </div>
       </footer>
     </>

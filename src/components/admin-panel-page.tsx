@@ -6,6 +6,20 @@ import type { FormEvent } from 'react';
 import type { OrderRecord, Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
 
+const DELIVERY_METHOD_LABELS: Record<OrderRecord['deliveryMethod'], string> = {
+  pickup: 'Retiro en el local',
+  delivery: 'Envío a domicilio',
+};
+
+function getArgentinaToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Cordoba' }).format(new Date());
+}
+
+function shiftDateParam(date: string, days: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 type ProductFormState = {
   name: string;
   price: string;
@@ -86,6 +100,8 @@ export default function AdminPanelPage() {
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<'checking' | 'authorized'>('checking');
+  const [selectedDate, setSelectedDate] = useState<string>(() => getArgentinaToday());
+  const [deliveryProviderName, setDeliveryProviderName] = useState('Uber Moto');
 
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
@@ -95,6 +111,13 @@ export default function AdminPanelPage() {
     }
 
     void refreshData(token);
+
+    fetch('/api/store-info')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((info) => {
+        if (info?.deliveryProviderName) setDeliveryProviderName(info.deliveryProviderName);
+      })
+      .catch((error) => console.error('Error fetching store info:', error));
   }, [router]);
 
   async function getAuthHeaders() {
@@ -114,16 +137,17 @@ export default function AdminPanelPage() {
     return false;
   }
 
-  async function refreshData(token?: string) {
+  async function refreshData(token?: string, dateOverride?: string) {
     const headers = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token ?? localStorage.getItem('adminToken')}`,
     };
+    const date = dateOverride ?? selectedDate;
 
     try {
       const [productsResponse, ordersResponse] = await Promise.all([
         fetch('/api/products'),
-        fetch('/api/admin/orders', { headers }),
+        fetch(`/api/admin/orders?date=${date}`, { headers }),
       ]);
 
       if (await handleAuthError(ordersResponse)) return;
@@ -134,6 +158,11 @@ export default function AdminPanelPage() {
     } catch (error) {
       console.error('Error loading admin data:', error);
     }
+  }
+
+  function goToDate(nextDate: string) {
+    setSelectedDate(nextDate);
+    void refreshData(undefined, nextDate);
   }
 
   function resetForm() {
@@ -384,8 +413,24 @@ export default function AdminPanelPage() {
 
         <h2>Pedidos</h2>
         <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. El sistema ya no descuenta stock porque los productos se venden por unidad de medida.</p>
+        <div className="delivery-notice">
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>Los precios y tiempos de envío están sujetos a variación, ya que las entregas se realizan mediante {deliveryProviderName}.</span>
+        </div>
+
+        <div className="order-date-nav">
+          <button type="button" onClick={() => goToDate(shiftDateParam(selectedDate, -1))}>◀ Día anterior</button>
+          <input
+            type="date"
+            value={selectedDate}
+            max={getArgentinaToday()}
+            onChange={(event) => event.target.value && goToDate(event.target.value)}
+          />
+          <button type="button" disabled={selectedDate >= getArgentinaToday()} onClick={() => goToDate(shiftDateParam(selectedDate, 1))}>Día siguiente ▶</button>
+        </div>
+
         <div>
-          {orders.length === 0 ? <p>Todavía no hay pedidos.</p> : null}
+          {orders.length === 0 ? <p>No hay pedidos para el {selectedDate}.</p> : null}
           {orders.map((order) => {
             const itemsHtml = order.items.map((item) => (
               <li key={`${order.id}-${item.id}`}>{formatProductQuantity(item.quantity, item.unit)} de {item.name} — ${(item.price * item.quantity).toFixed(2)}</li>
@@ -401,6 +446,7 @@ export default function AdminPanelPage() {
                   </div>
                   <ul className="order-items-list">{itemsHtml}</ul>
                   <div><strong>Total: ${order.total.toFixed(2)}</strong></div>
+                  <p className="order-delivery">{DELIVERY_METHOD_LABELS[order.deliveryMethod]}</p>
                   {order.status === 'pending' ? (
                     <div className="order-actions">
                       <button className="confirm-order-btn" type="button" onClick={() => handleConfirmOrder(order.id)}>Confirmar pago</button>

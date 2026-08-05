@@ -13,6 +13,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const cart = Array.isArray(body.cart) ? (body.cart as CartItem[]) : [];
+    const deliveryMethod = body.isDelivery ? 'delivery' : 'pickup';
 
     if (cart.length === 0) {
       return NextResponse.json({ error: 'El carrito está vacío.' }, { status: 400 });
@@ -42,11 +43,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No hay productos válidos en el carrito.' }, { status: 400 });
     }
 
+    if (deliveryMethod === 'delivery' && total < siteConfig.deliveryMinPurchase) {
+      return NextResponse.json(
+        { error: `El pedido mínimo para envío es $${siteConfig.deliveryMinPurchase.toFixed(2)}.` },
+        { status: 400 },
+      );
+    }
+
     const order = await prisma.order.create({
       data: {
         items: itemsForOrder,
         total,
         status: 'pending',
+        deliveryMethod,
       },
     });
 
