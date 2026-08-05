@@ -40,6 +40,7 @@ export default function StorefrontPage() {
   const [isDelivery, setIsDelivery] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
+  const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllProducts, setShowAllProducts] = useState(false);
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>('Todas');
@@ -107,11 +108,11 @@ export default function StorefrontPage() {
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
 
-  function addToCart(productId: number) {
+  function addToCart(productId: number, quantityToAdd?: number) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
 
-    const quantityToAdd = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+    const quantity = quantityToAdd ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
 
     setCart((currentCart) => {
       const nextCart = [...currentCart];
@@ -119,10 +120,10 @@ export default function StorefrontPage() {
       if (itemIndex >= 0) {
         nextCart[itemIndex] = {
           ...nextCart[itemIndex],
-          quantity: normalizeProductQuantity(nextCart[itemIndex].quantity + quantityToAdd, product.unit),
+          quantity: normalizeProductQuantity(nextCart[itemIndex].quantity + quantity, product.unit),
         };
       } else {
-        nextCart.push({ ...product, quantity: quantityToAdd });
+        nextCart.push({ ...product, quantity });
       }
       return nextCart;
     });
@@ -130,32 +131,27 @@ export default function StorefrontPage() {
     setToastMessage(`${product.name} agregado al carrito`);
   }
 
-  function adjustGridQuantity(productId: number, direction: 1 | -1) {
+  function getGridQuantity(product: Product) {
+    return gridQuantities[product.id] ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+  }
+
+  function adjustGridSelection(productId: number, direction: 1 | -1) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
     const step = PRODUCT_CART_STEP[product.unit];
-    const alreadyInCart = cart.some((item) => item.id === productId);
 
-    if (!alreadyInCart) {
-      if (direction < 0) return;
-      setToastMessage(`${product.name} agregado al carrito`);
-    }
-
-    setCart((currentCart) => {
-      const itemIndex = currentCart.findIndex((item) => item.id === productId);
-      if (itemIndex < 0) {
-        return [...currentCart, { ...product, quantity: PRODUCT_DEFAULT_CART_QUANTITY[product.unit] }];
-      }
-
-      const nextQuantity = normalizeProductQuantity(currentCart[itemIndex].quantity + direction * step, product.unit);
-      if (nextQuantity <= 0) {
-        return currentCart.filter((item) => item.id !== productId);
-      }
-
-      const nextCart = [...currentCart];
-      nextCart[itemIndex] = { ...nextCart[itemIndex], quantity: nextQuantity };
-      return nextCart;
+    setGridQuantities((current) => {
+      const currentQuantity = current[productId] ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
+      const nextQuantity = normalizeProductQuantity(currentQuantity + direction * step, product.unit);
+      if (nextQuantity < step) return current;
+      return { ...current, [productId]: nextQuantity };
     });
+  }
+
+  function addSelectedToCart(productId: number) {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+    addToCart(productId, getGridQuantity(product));
   }
 
   function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
@@ -327,8 +323,8 @@ export default function StorefrontPage() {
         ) : (
           <div className="product-grid">
             {visibleProducts.map((product) => {
-              const defaultQuantity = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-              const cartItem = cart.find((item) => item.id === product.id);
+              const selectedQuantity = getGridQuantity(product);
+              const step = PRODUCT_CART_STEP[product.unit];
               return (
                 <div className="product-card" key={product.id}>
                   <div className="product-card-image">
@@ -339,10 +335,13 @@ export default function StorefrontPage() {
                     <h3>{product.name}</h3>
                     <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
                     <div className="grid-qty-controls">
-                      <button type="button" disabled={!cartItem} onClick={() => adjustGridQuantity(product.id, -1)} aria-label={`Sacar ${product.name}`}>-</button>
-                      <span>{formatProductQuantity(cartItem ? cartItem.quantity : defaultQuantity, product.unit)}</span>
-                      <button type="button" onClick={() => adjustGridQuantity(product.id, 1)} aria-label={`Agregar ${product.name}`}>+</button>
+                      <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
+                      <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
+                      <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
                     </div>
+                    <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
+                      <i className="fa-solid fa-cart-plus" /> Añadir al carrito
+                    </button>
                   </div>
                 </div>
               );

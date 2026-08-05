@@ -371,7 +371,7 @@ main h2 i { color: var(--crate); }
   font-size: 0.95rem;
   font-weight: 600;
   transition: background-color 0.2s ease;
-  margin-top: auto;
+  margin-top: 10px;
 }
 
 .add-to-cart-btn:hover:not(:disabled) { background-color: var(--leaf-dark); }
