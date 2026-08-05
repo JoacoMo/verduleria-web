@@ -422,7 +422,7 @@ export default function StorefrontPage() {
                 <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
                   <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
                 </a>
-                <button type="button" className="continue-shopping-btn" onClick={() => setOrderConfirmation(null)}>
+                <button type="button" className="continue-shopping-btn" onClick={() => { setOrderConfirmation(null); setIsCartOpen(false); }}>
                   ¿Querés hacer otro pedido? Seguir comprando
                 </button>
               </div>
