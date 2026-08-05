@@ -44,6 +44,13 @@ export default function StorefrontPage() {
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllProducts, setShowAllProducts] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timeout = setTimeout(() => setToastMessage(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [toastMessage]);
   const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
 
   useEffect(() => {
@@ -96,7 +103,6 @@ export default function StorefrontPage() {
     if (!product) return;
 
     const quantityToAdd = PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-    const existingItem = cart.find((item) => item.id === productId);
 
     setCart((currentCart) => {
       const nextCart = [...currentCart];
@@ -111,6 +117,8 @@ export default function StorefrontPage() {
       }
       return nextCart;
     });
+
+    setToastMessage(`${product.name} agregado al carrito`);
   }
 
   function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
@@ -159,21 +167,23 @@ export default function StorefrontPage() {
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
     const lines = items.map((item) => {
       const quantityText = item.unit === 'unidad' ? `${item.quantity}x` : `${item.quantity}${item.unit}x`;
-      return `* ${quantityText} ${item.name} — $${(item.price * item.quantity).toFixed(2)}`;
+      return `- ${quantityText} ${item.name}: $${(item.price * item.quantity).toFixed(2)}`;
     }).join('%0A');
-    
-    const deliveryText = isDelivery ? 'Quiero que me lo envíen a domicilio.' : 'Voy a pasar a retirarlo.';
+
     const maxWeight = storeInfo.deliveryMaxWeightKg;
+    const deliveryText = isDelivery
+      ? `Quiero que me lo envíen por ${storeInfo.deliveryProviderName}.`
+      : 'Quiero retirarlo en el local.';
     const deliveryWarning = isDelivery && totalWeight > maxWeight
-      ? `%0A%0A⚠️ *Nota:* Tu pedido pesa más de ${maxWeight}kg. Tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
+      ? `%0A⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
       : '';
 
     const text =
       `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
       `${lines}%0A%0A` +
       `Total: $${total.toFixed(2)}%0A%0A` +
-      `*Entrega:* ${deliveryText}${deliveryWarning}%0A%0A` +
-      'Ya hago la transferencia y les mando el comprobante por acá.';
+      `Entrega: ${deliveryText}${deliveryWarning}%0A%0A` +
+      '¡Te envío el comprobante de la transferencia!';
     return `https://wa.me/${storeInfo.whatsappNumber}?text=${text}`;
   }
 
@@ -202,9 +212,9 @@ export default function StorefrontPage() {
       }
 
       const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
-      setOrderConfirmation({ ...result, items });
-
       const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
+      setOrderConfirmation({ ...result, items, whatsappUrl: waLink });
+
       if (waTab) {
         waTab.location.href = waLink;
       } else {
@@ -416,7 +426,7 @@ export default function StorefrontPage() {
                   {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
                 </ul>
                 <p>Ya te abrimos WhatsApp con el detalle del pedido. Cuando hagas la transferencia, mandanos el comprobante por ahí.</p>
-                <a className="whatsapp-btn" href={buildWhatsappMessage(orderConfirmation.items, orderConfirmation.orderId, orderConfirmation.total, isDelivery, totalWeight)} target="_blank" rel="noopener noreferrer">
+                <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
                   <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
                 </a>
               </div>
@@ -429,6 +439,12 @@ export default function StorefrontPage() {
         <i className="fa-solid fa-cart-shopping" />
         {cartCount > 0 ? <span className="cart-fab-count">{cartCount}</span> : null}
       </button>
+
+      {toastMessage ? (
+        <div className="toast" role="status">
+          <i className="fa-solid fa-circle-check" /> {toastMessage}
+        </div>
+      ) : null}
 
       <footer>
         <div className="container">

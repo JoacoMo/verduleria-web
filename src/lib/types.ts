@@ -57,4 +57,5 @@ export type OrderConfirmation = StoreInfo & {
   orderId: number;
   total: number;
   items: OrderItem[];
+  whatsappUrl: string;
 };
