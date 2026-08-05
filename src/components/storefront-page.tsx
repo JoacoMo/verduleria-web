@@ -168,23 +168,23 @@ export default function StorefrontPage() {
     const lines = items.map((item) => {
       const quantityText = item.unit === 'unidad' ? `${item.quantity}x` : `${item.quantity}${item.unit}x`;
       return `- ${quantityText} ${item.name}: $${(item.price * item.quantity).toFixed(2)}`;
-    }).join('%0A');
+    }).join('\n');
 
     const maxWeight = storeInfo.deliveryMaxWeightKg;
     const deliveryText = isDelivery
       ? `Quiero que me lo envíen por ${storeInfo.deliveryProviderName}.`
       : 'Quiero retirarlo en el local.';
     const deliveryWarning = isDelivery && totalWeight > maxWeight
-      ? `%0A⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
+      ? `\n⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
       : '';
 
     const text =
-      `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.%0A%0A` +
-      `${lines}%0A%0A` +
-      `Total: $${total.toFixed(2)}%0A%0A` +
-      `Entrega: ${deliveryText}${deliveryWarning}%0A%0A` +
+      `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.\n\n` +
+      `${lines}\n\n` +
+      `Total: $${total.toFixed(2)}\n\n` +
+      `Entrega: ${deliveryText}${deliveryWarning}\n\n` +
       '¡Te envío el comprobante de la transferencia!';
-    return `https://wa.me/${storeInfo.whatsappNumber}?text=${text}`;
+    return `https://wa.me/${storeInfo.whatsappNumber}?text=${encodeURIComponent(text)}`;
   }
 
   async function handleCheckout() {

@@ -138,11 +138,17 @@ header .container {
   cursor: pointer;
 }
 
+@keyframes toast-fade {
+  0% { opacity: 0; transform: translateY(10px); }
+  10% { opacity: 1; transform: translateY(0); }
+  85% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(10px); }
+}
+
 .toast {
   position: fixed;
   bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 24px;
   z-index: 250;
   background: var(--chalkboard);
   color: var(--chalk);
@@ -153,6 +159,7 @@ header .container {
   font-weight: 600;
   max-width: calc(100vw - 40px);
   text-align: center;
+  animation: toast-fade 2.5s ease forwards;
 }
 
 .toast i { color: var(--leaf); margin-right: 6px; }
