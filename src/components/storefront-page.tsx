@@ -517,9 +517,17 @@ export default function StorefrontPage() {
         </aside>
       </div>
 
-      <button type="button" className="cart-fab" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
+      <button type="button" className={`cart-fab ${cartCount > 0 ? 'has-items' : ''}`} onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
         <i className="fa-solid fa-cart-shopping" />
-        {cartCount > 0 ? <span className="cart-fab-count">{cartCount}</span> : null}
+        {cartCount > 0 ? (
+          <>
+            <span className="cart-fab-summary">
+              <span className="cart-fab-count-text">{cartCount} {cartCount === 1 ? 'producto' : 'productos'}</span>
+              <span className="cart-fab-total">${cartTotal.toFixed(2)}</span>
+            </span>
+            <i className="fa-solid fa-chevron-up cart-fab-chevron" />
+          </>
+        ) : null}
       </button>
 
       {toastMessage ? (

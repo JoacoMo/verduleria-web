@@ -120,7 +120,7 @@ header .container {
 }
 
 .cart-fab {
-  display: none;
+  display: flex;
   position: fixed;
   bottom: 20px;
   right: 20px;
@@ -134,9 +134,43 @@ header .container {
   box-shadow: 0 6px 16px rgba(30, 46, 34, 0.35);
   align-items: center;
   justify-content: center;
+  gap: 10px;
   font-size: 1.5rem;
   cursor: pointer;
+  transition: width 0.2s ease, border-radius 0.2s ease, padding 0.2s ease;
 }
+
+.cart-fab.has-items {
+  width: auto;
+  max-width: calc(100vw - 40px);
+  height: 56px;
+  border-radius: 30px;
+  padding: 0 20px 0 18px;
+  font-size: 1.25rem;
+}
+
+.cart-fab-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.cart-fab-summary .cart-fab-count-text {
+  font-family: 'Work Sans', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.cart-fab-summary .cart-fab-total {
+  font-family: 'DM Mono', monospace;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.cart-fab-chevron { font-size: 0.9rem; opacity: 0.8; }
 
 @keyframes toast-fade {
   0% { opacity: 0; transform: translateY(10px); }
@@ -147,7 +181,7 @@ header .container {
 
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: 94px;
   right: 24px;
   z-index: 250;
   background: var(--chalkboard);
@@ -163,24 +197,6 @@ header .container {
 }
 
 .toast i { color: var(--leaf); margin-right: 6px; }
-
-.cart-fab-count {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  background-color: var(--crate);
-  color: var(--chalkboard);
-  border-radius: 50%;
-  min-width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.78rem;
-  font-weight: 700;
-  font-family: 'DM Mono', monospace;
-  border: 2px solid var(--paper);
-}
 
 .header-edge {
   position: absolute;
@@ -1163,8 +1179,6 @@ button {
   /* La burbuja flotante reemplaza al ícono del carrito del header, que en
      mobile queda apilado debajo del texto y es poco cómodo de alcanzar. */
   .cart-icon { display: none; }
-  .cart-fab { display: flex; }
-  .toast { bottom: 94px; }
 
   /* Áreas táctiles más grandes para los controles del carrito */
   .qty-controls button {
