@@ -11,6 +11,8 @@ export const siteConfig = {
   transferCbu: process.env.TRANSFER_CBU || '',
   whatsappNumber: process.env.WHATSAPP_NUMBER || '5493517656500',
   contactEmail: 'gastaldo50@gmail.com',
+  // Si queda vacío, el menú no muestra el botón de Instagram.
+  instagramUrl: process.env.INSTAGRAM_URL || '',
   deliveryProviderName: process.env.DELIVERY_PROVIDER_NAME || 'Uber Moto',
   deliveryMaxWeightKg: Number(process.env.DELIVERY_MAX_WEIGHT_KG) || 7,
   deliveryMinPurchase: Number(process.env.DELIVERY_MIN_PURCHASE) || 10000,

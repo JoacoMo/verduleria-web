@@ -48,6 +48,7 @@ export type StoreInfo = {
   deliveryMaxWeightKg: number;
   deliveryMinPurchase: number;
   deliveryFreeThreshold: number;
+  instagramUrl: string;
   mercadoPagoEnabled?: boolean;
 };
 

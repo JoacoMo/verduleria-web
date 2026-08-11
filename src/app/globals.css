@@ -1414,3 +1414,162 @@ button {
     min-height: 44px;
   }
 }
+
+/* ================= Menú tipo app ================= */
+
+.app-nav {
+  position: sticky;
+  top: 0;
+  z-index: 160;
+  background: var(--chalkboard);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app-nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.app-nav-title {
+  font-family: 'Caveat', cursive;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--chalk);
+  line-height: 1;
+}
+
+/* Botón de las tres barras. 44x44 para que sea cómodo con el dedo. */
+.menu-toggle {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  height: 44px;
+  padding: 0 9px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.menu-toggle:hover { background: rgba(255, 255, 255, 0.08); }
+
+.menu-bar {
+  display: block;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--chalk);
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+/* Las tres barras se convierten en una X. */
+.menu-toggle.open .menu-bar:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.menu-toggle.open .menu-bar:nth-child(2) { opacity: 0; }
+.menu-toggle.open .menu-bar:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* El panel se despliega ocupando alto real (no position:absolute) para que
+   empuje el contenido y no tape los productos. */
+.app-menu {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.28s ease;
+  background: var(--chalkboard-line);
+}
+
+.app-menu.open { max-height: 420px; }
+
+.app-menu-items {
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
+  padding-bottom: 10px;
+}
+
+.app-menu-items button,
+.app-menu-items a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 4px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--chalk);
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.app-menu-items button:last-child,
+.app-menu-items a:last-child { border-bottom: none; }
+
+.app-menu-items button:hover,
+.app-menu-items a:hover { color: var(--crate); }
+
+.app-menu-items i {
+  width: 22px;
+  text-align: center;
+  color: var(--crate);
+  font-size: 1.05rem;
+}
+
+/* En desktop el menú se muestra en línea y desaparece la hamburguesa: hay
+   espacio de sobra y obligar a abrir un panel sería un paso de más. */
+@media (min-width: 900px) {
+  .menu-toggle { display: none; }
+
+  .app-nav-inner { padding-bottom: 0; }
+
+  .app-menu {
+    max-height: none;
+    overflow: visible;
+    background: transparent;
+    margin-top: -44px;
+  }
+
+  .app-menu-items {
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 6px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .app-menu-items button,
+  .app-menu-items a {
+    width: auto;
+    min-height: 40px;
+    padding: 8px 14px;
+    border-bottom: none;
+    border-radius: 20px;
+    font-size: 0.92rem;
+  }
+
+  .app-menu-items button:hover,
+  .app-menu-items a:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--crate);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-menu, .menu-bar { transition: none; }
+}
+
+/* La barra de navegación es sticky, así que al saltar a una sección quedaría
+   tapada por ella. scroll-margin-top deja el aire suficiente arriba. */
+#productos,
+#ubicacion,
+#informacion {
+  scroll-margin-top: 80px;
+}

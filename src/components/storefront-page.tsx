@@ -33,6 +33,7 @@ const DEFAULT_STORE_INFO: StoreInfo = {
   deliveryMaxWeightKg: 7,
   deliveryMinPurchase: 10000,
   deliveryFreeThreshold: 20000,
+  instagramUrl: '',
 };
 
 type StorefrontPageProps = {
@@ -54,6 +55,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const [isDelivery, setIsDelivery] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'mercadopago'>('transfer');
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -92,6 +94,37 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isCartOpen]);
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setIsMenuOpen(false);
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMenuOpen]);
+
+  /**
+   * Lleva a una sección de la página y cierra el menú.
+   *
+   * Se usa scrollIntoView en vez de un href="#seccion" para poder cerrar el menú
+   * en el mismo gesto y no dejar el hash colgado en la URL.
+   */
+  function goToSection(sectionId: string) {
+    setIsMenuOpen(false);
+
+    if (sectionId === 'inicio') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // El menú se cierra con una transición; se espera un toque para que el
+    // scroll no compita con ella.
+    window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }
 
   useEffect(() => {
     // Se refresca igual en el cliente para tomar cambios de precio recientes,
@@ -309,6 +342,60 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   return (
     <>
       <header>
+        <nav className="app-nav" aria-label="Menú principal">
+          <div className="container app-nav-inner">
+            <button
+              type="button"
+              className={`menu-toggle ${isMenuOpen ? 'open' : ''}`}
+              onClick={() => setIsMenuOpen((open) => !open)}
+              aria-expanded={isMenuOpen}
+              aria-controls="menu-principal"
+              aria-label={isMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
+            >
+              {/* Tres barras que se transforman en una X al abrir. */}
+              <span className="menu-bar" />
+              <span className="menu-bar" />
+              <span className="menu-bar" />
+            </button>
+            <span className="app-nav-title">El Pampa</span>
+          </div>
+
+          <div id="menu-principal" className={`app-menu ${isMenuOpen ? 'open' : ''}`}>
+            <div className="container app-menu-items">
+              <button type="button" onClick={() => goToSection('inicio')}>
+                <i className="fa-solid fa-house" /> Inicio
+              </button>
+              <button type="button" onClick={() => goToSection('productos')}>
+                <i className="fa-solid fa-carrot" /> Productos
+              </button>
+              <button type="button" onClick={() => goToSection('ubicacion')}>
+                <i className="fa-solid fa-location-dot" /> Ubicación
+              </button>
+              <button type="button" onClick={() => goToSection('informacion')}>
+                <i className="fa-solid fa-circle-info" /> Información
+              </button>
+              <a
+                href={`https://wa.me/${storeInfo.whatsappNumber}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setIsMenuOpen(false)}
+              >
+                <i className="fa-brands fa-whatsapp" /> WhatsApp
+              </a>
+              {storeInfo.instagramUrl ? (
+                <a
+                  href={storeInfo.instagramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  <i className="fa-brands fa-instagram" /> Instagram
+                </a>
+              ) : null}
+            </div>
+          </div>
+        </nav>
+
         <div className="container">
           <div className="hero-text">
             <h1><i className="fa-solid fa-carrot" />El Pampa</h1>
@@ -331,7 +418,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
       </header>
 
       <main className="container">
-        <h2><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
+        <h2 id="productos"><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
         <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
 
         <div className="search-bar">
@@ -425,7 +512,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
           </button>
         ) : null}
 
-        <section className="contact-section">
+        <section className="contact-section" id="ubicacion">
           <div className="contact-heading">
             <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
             {storeStatus ? (

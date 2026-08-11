@@ -232,7 +232,7 @@ export default async function Page() {
  */
 function InfoSection() {
   return (
-    <section className="info-section">
+    <section className="info-section" id="informacion">
       <h2><i className="fa-solid fa-circle-info" /> Sobre {siteConfig.storeName}</h2>
       <p>
         {siteConfig.storeName} es una verdulería y frutería en {siteConfig.storeAddress},
