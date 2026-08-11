@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +19,9 @@ export async function GET(request: Request) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
 
+  const limited = enforceRateLimit(request, 'adminWrite');
+  if (limited) return limited;
+
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get('date');
   const date = dateParam && isValidDateParam(dateParam) ? dateParam : getArgentinaTodayDateParam();
@@ -32,7 +36,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json(orders);
   } catch (error) {
-    console.error('Error en GET /api/admin/orders:', error);
+    console.error('Error en GET /api/gestion/orders:', error);
     return NextResponse.json({ error: 'Error al obtener los pedidos.' }, { status: 500 });
   }
 }

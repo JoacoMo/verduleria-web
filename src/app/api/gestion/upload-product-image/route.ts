@@ -1,11 +1,23 @@
+import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'product-images';
+
+// El bucket es público: si se pudiera subir cualquier cosa, un token robado
+// permitiría alojar HTML/SVG con scripts en el dominio de Supabase.
+const ALLOWED_IMAGE_TYPES = new Set(['image/webp', 'image/jpeg', 'image/png']);
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  'image/webp': 'webp',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+};
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 async function ensureBucketExists() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -71,6 +83,9 @@ export async function POST(request: Request) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
 
+  const limited = enforceRateLimit(request, 'upload');
+  if (limited) return limited;
+
   try {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return NextResponse.json({ error: 'Faltan variables de Supabase Storage.' }, { status: 500 });
@@ -83,15 +98,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No se recibió ninguna imagen.' }, { status: 400 });
     }
 
+    const contentType = file.type.toLowerCase();
+    if (!ALLOWED_IMAGE_TYPES.has(contentType)) {
+      return NextResponse.json(
+        { error: 'Formato no permitido. Subí una imagen WebP, JPG o PNG.' },
+        { status: 400 },
+      );
+    }
+
+    if (file.size === 0) {
+      return NextResponse.json({ error: 'La imagen está vacía.' }, { status: 400 });
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: 'La imagen no puede superar los 5 MB.' }, { status: 400 });
+    }
+
     await ensureBucketExists();
 
-    const safeName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
+    // El nombre lo generamos nosotros a partir del tipo declarado: nunca usamos la
+    // extensión que venga en file.name, así no se puede forzar un .html o un .svg.
+    const extension = EXTENSION_BY_TYPE[contentType];
+    const safeName = `${Date.now()}-${randomUUID()}.${extension}`;
+
     const uploadResponse = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${safeName}`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': file.type || 'application/octet-stream',
+        'Content-Type': contentType,
         'x-upsert': 'true',
       },
       body: Buffer.from(await file.arrayBuffer()),
@@ -109,7 +144,7 @@ export async function POST(request: Request) {
       url: publicUrl,
     });
   } catch (error) {
-    console.error('Error en /api/admin/upload-product-image:', error);
+    console.error('Error en /api/gestion/upload-product-image:', error);
     return NextResponse.json({ error: 'No se pudo procesar la imagen.' }, { status: 500 });
   }
 }

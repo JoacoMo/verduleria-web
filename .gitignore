@@ -7,3 +7,11 @@ node_modules
 
 # Configuración local de Claude Code (permisos específicos de la máquina/sesión)
 .claude/settings.local.json
+
+# Herramientas de agentes / build local
+.agents/
+.claude/skills/
+.claude/settings.local.json
+.mcp.json
+skills-lock.json
+tsconfig.tsbuildinfo

@@ -38,6 +38,20 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Toda la app se renderiza por request.
+ *
+ * Lo obliga la CSP con nonce: el nonce cambia en cada respuesta, y una página
+ * prerenderizada quedaría con un nonce viejo (o sin nonce), así que el navegador
+ * bloquea los scripts de Next y la página no hidrata. Eso ya nos pasó: `/trastienda`
+ * era estática y el formulario de login no respondía.
+ *
+ * El costo es perder el cacheo estático de las páginas simples (términos,
+ * privacidad, estados de pago). Para el tráfico de este sitio es aceptable, y a
+ * cambio la CSP protege de verdad en todas las rutas.
+ */
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="es">

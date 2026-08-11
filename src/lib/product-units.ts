@@ -20,6 +20,17 @@ export const PRODUCT_CART_STEP: Record<ProductUnit, number> = {
   unidad: 1,
 };
 
+/**
+ * Tope por producto en un mismo pedido. Es una verdulería de barrio: nadie pide
+ * 400 kg de tomate por la web. Sirve para que nadie pueda inflar un pedido con
+ * cantidades absurdas mandando el request a mano.
+ */
+export const PRODUCT_MAX_CART_QUANTITY: Record<ProductUnit, number> = {
+  kg: 100,
+  g: 50000,
+  unidad: 200,
+};
+
 export function isProductUnit(value: unknown): value is ProductUnit {
   return typeof value === 'string' && PRODUCT_UNITS.includes(value as ProductUnit);
 }

@@ -8,6 +8,7 @@ export type Product = {
   image: string;
   unit: ProductUnit;
   category: ProductCategory;
+  available: boolean;
   createdAt?: string;
 };
 
@@ -46,6 +47,8 @@ export type StoreInfo = {
   deliveryProviderName: string;
   deliveryMaxWeightKg: number;
   deliveryMinPurchase: number;
+  deliveryFreeThreshold: number;
+  mercadoPagoEnabled?: boolean;
 };
 
 export type ProductPayload = {
@@ -54,6 +57,7 @@ export type ProductPayload = {
   image?: string;
   unit?: ProductUnit;
   category?: ProductCategory;
+  available?: boolean;
 };
 
 export type OrderConfirmation = StoreInfo & {

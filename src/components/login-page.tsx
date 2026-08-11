@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ADMIN_API, ADMIN_ROUTES } from '@/lib/routes';
 import type { FormEvent } from 'react';
 
 export default function LoginPage() {
@@ -12,7 +13,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (localStorage.getItem('adminToken')) {
-      router.replace('/panel');
+      router.replace(ADMIN_ROUTES.panel);
     }
   }, [router]);
 
@@ -21,7 +22,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const response = await fetch('/api/admin/login', {
+      const response = await fetch(`${ADMIN_API}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -34,7 +35,7 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('adminToken', data.token);
-      router.push('/panel');
+      router.push(ADMIN_ROUTES.panel);
     } catch (error) {
       console.error('Error al iniciar sesión:', error);
       setError('No se pudo conectar con el servidor.');

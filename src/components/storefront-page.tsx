@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
 import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
+import { formatArs } from '@/lib/format-price';
 import { isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
 import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
 
@@ -30,14 +32,27 @@ const DEFAULT_STORE_INFO: StoreInfo = {
   deliveryProviderName: 'Uber Moto',
   deliveryMaxWeightKg: 7,
   deliveryMinPurchase: 10000,
+  deliveryFreeThreshold: 20000,
 };
 
-export default function StorefrontPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+type StorefrontPageProps = {
+  /**
+   * Productos renderizados en el servidor. Sirven de estado inicial para que el
+   * HTML ya venga con la lista: si esperamos al fetch del cliente, los buscadores
+   * y sobre todo los crawlers de IA (que no ejecutan JavaScript) ven la tienda vacía.
+   */
+  initialProducts?: Product[];
+  /** Bloque "Sobre el local" + preguntas frecuentes, renderizado en el servidor. */
+  infoSection?: ReactNode;
+};
+
+export default function StorefrontPage({ initialProducts = [], infoSection }: StorefrontPageProps) {
+  const [products, setProducts] = useState<Product[]>(initialProducts);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [storeInfo, setStoreInfo] = useState<StoreInfo>(DEFAULT_STORE_INFO);
   const [orderConfirmation, setOrderConfirmation] = useState<OrderConfirmation | null>(null);
   const [isDelivery, setIsDelivery] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'mercadopago'>('transfer');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
@@ -79,11 +94,16 @@ export default function StorefrontPage() {
   }, [isCartOpen]);
 
   useEffect(() => {
+    // Se refresca igual en el cliente para tomar cambios de precio recientes,
+    // pero si falla nos quedamos con los productos que vinieron del servidor.
     async function fetchProducts() {
       try {
         const response = await fetch('/api/products');
         if (!response.ok) throw new Error('No se pudieron cargar los productos.');
-        setProducts(await response.json());
+        const freshProducts = await response.json();
+        if (Array.isArray(freshProducts) && freshProducts.length > 0) {
+          setProducts(freshProducts);
+        }
       } catch (error) {
         console.error('Error fetching products:', error);
       }
@@ -107,10 +127,14 @@ export default function StorefrontPage() {
   const cartCount = useMemo(() => cart.length, [cart]);
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
+  const hasFreeShipping = cartTotal >= storeInfo.deliveryFreeThreshold;
+  const missingForFreeShipping = Math.max(0, storeInfo.deliveryFreeThreshold - cartTotal);
 
   function addToCart(productId: number, quantityToAdd?: number) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
+    // Nada sin stock entra al carrito. El servidor lo vuelve a chequear igual.
+    if (!product.available) return;
 
     const quantity = quantityToAdd ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
 
@@ -197,7 +221,8 @@ export default function StorefrontPage() {
   const relatedProducts = useMemo(() => {
     if (cart.length === 0) return [];
     const cartIds = new Set(cart.map((item) => item.id));
-    return products.filter((product) => !cartIds.has(product.id)).slice(0, 4);
+    // No se recomienda lo que no se puede comprar.
+    return products.filter((product) => !cartIds.has(product.id) && product.available).slice(0, 4);
   }, [products, cart]);
 
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
@@ -213,12 +238,15 @@ export default function StorefrontPage() {
     const deliveryWarning = isDelivery && totalWeight > maxWeight
       ? `\n⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
       : '';
+    const freeShippingNote = isDelivery && total >= storeInfo.deliveryFreeThreshold
+      ? `\n🚚 El pedido supera los ${formatArs(storeInfo.deliveryFreeThreshold)}, así que el envío es gratis.`
+      : '';
 
     const text =
       `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.\n\n` +
       `${lines}\n\n` +
       `Total: $${total.toFixed(2)}\n\n` +
-      `Entrega: ${deliveryText}${deliveryWarning}\n\n` +
+      `Entrega: ${deliveryText}${deliveryWarning}${freeShippingNote}\n\n` +
       '¡Te envío el comprobante de la transferencia!';
     return `https://wa.me/${storeInfo.whatsappNumber}?text=${encodeURIComponent(text)}`;
   }
@@ -228,7 +256,9 @@ export default function StorefrontPage() {
 
     // Se abre una pestaña en blanco de forma síncrona (dentro del gesto del click)
     // para evitar que el navegador bloquee el popup al redirigirla después del fetch.
-    const waTab = window.open('', '_blank');
+    // Con tarjeta redirigimos la pestaña actual a Mercado Pago, así que no hace falta.
+    const isCardPayment = paymentMethod === 'mercadopago';
+    const waTab = isCardPayment ? null : window.open('', '_blank');
 
     try {
       const response = await fetch('/api/checkout', {
@@ -237,6 +267,7 @@ export default function StorefrontPage() {
         body: JSON.stringify({
           cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
           isDelivery,
+          paymentMethod,
         }),
       });
 
@@ -247,13 +278,23 @@ export default function StorefrontPage() {
         return;
       }
 
+      // Pago con tarjeta: el cliente sigue en Mercado Pago y vuelve por back_urls.
+      if (isCardPayment) {
+        if (result.checkoutUrl) {
+          setCart([]);
+          window.location.href = result.checkoutUrl;
+          return;
+        }
+        alert('No pudimos generar el link de pago. Podés pagar por transferencia.');
+      }
+
       const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
       const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
       setOrderConfirmation({ ...result, items, whatsappUrl: waLink });
 
       if (waTab) {
         waTab.location.href = waLink;
-      } else {
+      } else if (!isCardPayment) {
         window.open(waLink, '_blank', 'noopener,noreferrer');
       }
 
@@ -275,6 +316,9 @@ export default function StorefrontPage() {
               <path d="M2 9 C 40 2, 80 13, 120 7 S 200 1, 258 8" stroke="#C98A3E" strokeWidth="3" fill="none" strokeLinecap="round" />
             </svg>
             <p className="hero-tagline">Verdulería y frutería en Barrio General Paz, Córdoba Capital. Pedí por kilo, gramos o unidad y coordinamos retiro o envío.</p>
+            <p className="hero-shipping-badge">
+              <i className="fa-solid fa-truck-fast" /> Envío gratis en pedidos desde {formatArs(storeInfo.deliveryFreeThreshold)}
+            </p>
           </div>
           <button type="button" className="cart-icon" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
             <i className="fa-solid fa-cart-shopping" />
@@ -326,22 +370,42 @@ export default function StorefrontPage() {
               const selectedQuantity = getGridQuantity(product);
               const step = PRODUCT_CART_STEP[product.unit];
               return (
-                <div className="product-card" key={product.id}>
+                <div className={`product-card ${product.available ? '' : 'product-card-unavailable'}`} key={product.id}>
                   <div className="product-card-image">
                     <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                     <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
+                    {product.available ? null : <span className="unavailable-overlay">Sin stock</span>}
                   </div>
                   <div className="product-info">
                     <h3>{product.name}</h3>
+                    {product.available ? (
+                      <p className="availability-note available">
+                        <span className="status-dot" aria-hidden="true" />
+                        Disponible
+                      </p>
+                    ) : (
+                      <p className="availability-note unavailable">
+                        <span className="status-dot" aria-hidden="true" />
+                        No disponible por ahora
+                      </p>
+                    )}
                     <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                    <div className="grid-qty-controls">
-                      <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
-                      <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
-                      <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
-                    </div>
-                    <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
-                      <i className="fa-solid fa-cart-plus" /> Añadir al carrito
-                    </button>
+                    {product.available ? (
+                      <>
+                        <div className="grid-qty-controls">
+                          <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
+                          <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
+                          <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
+                        </div>
+                        <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
+                          <i className="fa-solid fa-cart-plus" /> Añadir al carrito
+                        </button>
+                      </>
+                    ) : (
+                      <button className="add-to-cart-btn" disabled>
+                        Sin stock por ahora
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -366,7 +430,8 @@ export default function StorefrontPage() {
             <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
             {storeStatus ? (
               <span className={`store-status-badge ${storeStatus.open ? 'open' : 'closed'}`}>
-                <i className="fa-solid fa-circle" /> {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
+                <span className="status-dot" aria-hidden="true" />
+                {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
               </span>
             ) : null}
           </div>
@@ -400,6 +465,8 @@ export default function StorefrontPage() {
             />
           </div>
         </section>
+
+        {infoSection}
       </main>
 
       <div className={`cart-drawer-overlay ${isCartOpen ? 'open' : ''}`} onClick={() => setIsCartOpen(false)}>
@@ -506,11 +573,36 @@ export default function StorefrontPage() {
             {belowDeliveryMinimum ? (
               <div className="delivery-notice delivery-notice-warning">
                 <i className="fa-solid fa-circle-exclamation" />
-                <span>Para envío el pedido mínimo es ${storeInfo.deliveryMinPurchase.toFixed(2)} — te faltan ${(storeInfo.deliveryMinPurchase - cartTotal).toFixed(2)}, o elegí retiro en el local.</span>
+                <span>Para envío el pedido mínimo es {formatArs(storeInfo.deliveryMinPurchase)} — te faltan {formatArs(storeInfo.deliveryMinPurchase - cartTotal)}, o elegí retiro en el local.</span>
+              </div>
+            ) : null}
+            {isDelivery && !belowDeliveryMinimum ? (
+              hasFreeShipping ? (
+                <div className="delivery-notice delivery-notice-free">
+                  <i className="fa-solid fa-truck-fast" />
+                  <span>¡Tenés envío gratis! Tu pedido supera los {formatArs(storeInfo.deliveryFreeThreshold)}.</span>
+                </div>
+              ) : (
+                <div className="delivery-notice">
+                  <i className="fa-solid fa-truck" />
+                  <span>Sumá {formatArs(missingForFreeShipping)} más y el envío te sale gratis (desde {formatArs(storeInfo.deliveryFreeThreshold)}).</span>
+                </div>
+              )
+            ) : null}
+            {storeInfo.mercadoPagoEnabled ? (
+              <div className="payment-toggle">
+                <button type="button" className={paymentMethod === 'transfer' ? 'active' : ''} onClick={() => setPaymentMethod('transfer')}>
+                  <i className="fa-solid fa-building-columns" /> Transferencia
+                </button>
+                <button type="button" className={paymentMethod === 'mercadopago' ? 'active' : ''} onClick={() => setPaymentMethod('mercadopago')}>
+                  <i className="fa-solid fa-credit-card" /> Tarjeta / Mercado Pago
+                </button>
               </div>
             ) : null}
             <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>Pedir por transferencia</button>
+            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>
+              {paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
+            </button>
           </div>
           </>
           )}

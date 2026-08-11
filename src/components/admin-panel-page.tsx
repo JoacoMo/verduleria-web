@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ADMIN_API, ADMIN_ROUTES } from '@/lib/routes';
 import type { FormEvent } from 'react';
 import type { OrderRecord, Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
@@ -116,7 +117,7 @@ export default function AdminPanelPage() {
   useEffect(() => {
     const token = localStorage.getItem('adminToken');
     if (!token) {
-      router.replace('/login');
+      router.replace(ADMIN_ROUTES.login);
       return;
     }
 
@@ -134,7 +135,7 @@ export default function AdminPanelPage() {
   async function handleAuthError(response: Response) {
     if (response.status === 401) {
       localStorage.removeItem('adminToken');
-      router.replace('/login');
+      router.replace(ADMIN_ROUTES.login);
       return true;
     }
     return false;
@@ -150,7 +151,7 @@ export default function AdminPanelPage() {
     try {
       const [productsResponse, ordersResponse] = await Promise.all([
         fetch('/api/products'),
-        fetch(`/api/admin/orders?date=${date}`, { headers }),
+        fetch(`${ADMIN_API}/orders?date=${date}`, { headers }),
       ]);
 
       if (await handleAuthError(ordersResponse)) return;
@@ -203,7 +204,7 @@ export default function AdminPanelPage() {
       const formData = new FormData();
       formData.append('file', compressed.file);
 
-      const response = await fetch('/api/admin/upload-product-image', {
+      const response = await fetch(`${ADMIN_API}/upload-product-image`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
@@ -239,7 +240,7 @@ export default function AdminPanelPage() {
     };
 
     const isEditing = editingProductId !== null;
-    const url = isEditing ? `/api/admin/products/${editingProductId}` : '/api/admin/products';
+    const url = isEditing ? `${ADMIN_API}/products/${editingProductId}` : `${ADMIN_API}/products`;
     const method = isEditing ? 'PUT' : 'POST';
 
     try {
@@ -269,7 +270,7 @@ export default function AdminPanelPage() {
     if (!confirm('¿Estás seguro de eliminar este producto?')) return;
 
     try {
-      const response = await fetch(`/api/admin/products/${productId}`, {
+      const response = await fetch(`${ADMIN_API}/products/${productId}`, {
         method: 'DELETE',
         headers: await getAuthHeaders(),
       });
@@ -282,11 +283,42 @@ export default function AdminPanelPage() {
     }
   }
 
+  async function handleToggleAvailability(productId: number, nextAvailable: boolean) {
+    // Se actualiza en pantalla al toque y se revierte si el servidor rechaza:
+    // el dueño aprieta esto varias veces seguidas y esperar el ida y vuelta molesta.
+    setProducts((current) => current.map((item) => (
+      item.id === productId ? { ...item, available: nextAvailable } : item
+    )));
+
+    try {
+      const response = await fetch(`${ADMIN_API}/products/${productId}/availability`, {
+        method: 'PUT',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({ available: nextAvailable }),
+      });
+
+      if (await handleAuthError(response)) return;
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        alert(data.error || 'No se pudo cambiar la disponibilidad.');
+        await refreshData();
+        return;
+      }
+
+      await refreshData();
+    } catch (error) {
+      console.error('Error al cambiar disponibilidad:', error);
+      alert('No se pudo cambiar la disponibilidad.');
+      await refreshData();
+    }
+  }
+
   async function handleConfirmOrder(orderId: number) {
     if (!confirm('¿Confirmás que llegó la transferencia de este pedido? Se va a descontar el stock.')) return;
 
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/confirm`, {
+      const response = await fetch(`${ADMIN_API}/orders/${orderId}/confirm`, {
         method: 'PUT',
         headers: await getAuthHeaders(),
       });
@@ -309,7 +341,7 @@ export default function AdminPanelPage() {
     if (!confirm('¿Cancelar este pedido?')) return;
 
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/cancel`, {
+      const response = await fetch(`${ADMIN_API}/orders/${orderId}/cancel`, {
         method: 'PUT',
         headers: await getAuthHeaders(),
       });
@@ -326,7 +358,7 @@ export default function AdminPanelPage() {
     if (!confirm('¿Eliminar este pedido? Esta acción no se puede deshacer.')) return;
 
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}`, {
+      const response = await fetch(`${ADMIN_API}/orders/${orderId}`, {
         method: 'DELETE',
         headers: await getAuthHeaders(),
       });
@@ -341,7 +373,7 @@ export default function AdminPanelPage() {
 
   function handleLogout() {
     localStorage.removeItem('adminToken');
-    router.push('/login');
+    router.push(ADMIN_ROUTES.login);
   }
 
   const sortedFilteredProducts = useMemo(() => {
@@ -468,16 +500,25 @@ export default function AdminPanelPage() {
         ) : (
           <div>
             {visibleProducts.map((product) => (
-              <div className="product-item" key={product.id}>
+              <div className={`product-item ${product.available ? '' : 'product-item-unavailable'}`} key={product.id}>
                 <div className="product-item-info">
                   <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                   <div>
                     <strong>{product.name}</strong> <span className="category-tag">{product.category}</span>
+                    {product.available ? null : <span className="sin-stock-tag">Sin stock</span>}
                     <br />
                     ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
                   </div>
                 </div>
                 <div className="product-item-actions">
+                  <button
+                    className={`availability-btn ${product.available ? 'is-available' : 'is-unavailable'}`}
+                    type="button"
+                    onClick={() => handleToggleAvailability(product.id, !product.available)}
+                    title={product.available ? 'Marcar como sin stock' : 'Volver a poner disponible'}
+                  >
+                    {product.available ? 'Marcar sin stock' : 'Marcar disponible'}
+                  </button>
                   <button className="edit-btn" type="button" onClick={() => handleEdit(product.id)}>Editar</button>
                   <button className="delete-btn" type="button" onClick={() => handleDelete(product.id)}>Eliminar</button>
                 </div>
