@@ -27,6 +27,11 @@ model Order {
   total          Float
   status         String   @default("pending") // pending | paid | failed
   deliveryMethod String   @default("pickup") // pickup | delivery
+  // Clave que manda el navegador para que tocar "pagar" dos veces no genere
+  // dos pedidos: si ya existe una con esta clave, se devuelve ese mismo pedido.
+  // El índice único es lo que garantiza que no se cuelen duplicados aunque
+  // lleguen dos requests exactamente a la vez.
+  idempotencyKey String?  @unique
   mpPreferenceId String?
   mpPaymentId    String?
   customerName   String?

@@ -161,6 +161,46 @@ En Vercel: **Project > Logs**, y filtrás por `secEvent`. Se registran logins fa
 (con el usuario probado, nunca la contraseña), rate limits alcanzados, tokens
 inválidos, orígenes bloqueados y firmas de webhook inválidas.
 
+## Caché del catálogo
+
+La base está en São Paulo y una consulta de productos tarda ~200 ms. Como la home
+se renderiza por request (lo obliga la CSP con nonce), sin caché cada visita pagaba
+esa demora dos veces: una en el render y otra en el fetch del cliente.
+
+`src/lib/products.ts` cachea la lectura del catálogo (60 s) con `unstable_cache`.
+No se queda vieja: cada vez que el panel crea, edita, borra o cambia la
+disponibilidad de un producto llama a `invalidarProductos()`, así que **los cambios
+se ven al instante**, no al minuto.
+
+Medido: ~200 ms contra ~5 ms.
+
+## Idempotencia del checkout
+
+Antes, cada POST a `/api/checkout` creaba un pedido nuevo: tocar "pagar" dos veces
+en el celular generaba dos pedidos y dos links de pago. Ahora hay tres barreras:
+
+1. El botón se deshabilita y muestra "Procesando..." mientras hay un pedido en curso.
+2. El navegador manda una `idempotencyKey` que se mantiene entre reintentos del
+   mismo intento de compra y se renueva recién cuando el pedido sale bien.
+3. La columna `idempotencyKey` tiene índice **UNIQUE**: si dos requests llegan a la
+   vez y ambos pasan la lectura previa, la base rechaza el segundo y el handler
+   devuelve el pedido que ya se creó.
+
+Un reintento devuelve el mismo `orderId` y el mismo link de pago (se reconstruye
+desde `mpPreferenceId`), así que tampoco se generan preferencias de más.
+
+## Sobre transacciones y N+1
+
+No hay problema N+1: el checkout resuelve todo el carrito con un solo
+`findMany({ where: { id: { in: [...] } } })`, y los pedidos guardan los ítems como
+JSON, así que listarlos no dispara consultas por ítem. No hay consultas dentro de
+loops.
+
+La llamada a Mercado Pago queda **fuera** de cualquier transacción a propósito:
+mantener una transacción abierta mientras se espera una API externa retiene locks
+todo ese tiempo y es una causa clásica de bloqueos. Si la preferencia falla, el
+pedido igual quedó registrado y el cliente puede pagar por transferencia.
+
 ## Protección contra ataques
 
 El login y el checkout tienen un limitador de intentos por IP, pero es **en memoria**:

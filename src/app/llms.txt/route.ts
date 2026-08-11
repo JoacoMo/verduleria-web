@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma';
+import { getCachedProducts } from '@/lib/products';
 import { siteConfig } from '@/lib/site';
 import { PRODUCT_UNIT_LABELS } from '@/lib/product-units';
 import { formatArs } from '@/lib/format-price';
@@ -18,9 +18,7 @@ export async function GET() {
   let productLines = '';
 
   try {
-    const products = await prisma.product.findMany({
-      orderBy: [{ available: 'desc' }, { name: 'asc' }],
-    });
+    const products = await getCachedProducts();
     if (products.length > 0) {
       productLines = products
         .map((product) => {

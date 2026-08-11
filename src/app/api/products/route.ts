@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { enforceRateLimit } from '@/lib/rate-limit';
+import { getCachedProducts, invalidarProductos } from '@/lib/products';
 
 export const runtime = 'nodejs';
 
@@ -16,21 +17,21 @@ const DEFAULT_PRODUCTS_FALLBACK = [
   { id: -3, name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad', category: 'Verduras', available: true },
 ];
 
-// Los no disponibles se mandan al final: no tiene sentido que lo primero que
-// vea el cliente sea algo que no puede comprar. Dentro de cada grupo, alfabético.
-const PRODUCT_ORDER = [{ available: 'desc' as const }, { name: 'asc' as const }];
-
 export async function GET(request: Request) {
   const limited = enforceRateLimit(request, 'publicRead');
   if (limited) return limited;
 
   try {
-    const products = await prisma.product.findMany({ orderBy: PRODUCT_ORDER });
+    const products = await getCachedProducts();
+
+    // Base recién creada: se siembran los productos por defecto y se tira la
+    // caché para que la próxima lectura los tome.
     if (products.length === 0) {
       await prisma.product.createMany({ data: DEFAULT_PRODUCT_SEED });
-      const seededProducts = await prisma.product.findMany({ orderBy: PRODUCT_ORDER });
-      return NextResponse.json(seededProducts);
+      invalidarProductos();
+      return NextResponse.json(DEFAULT_PRODUCTS_FALLBACK);
     }
+
     return NextResponse.json(products);
   } catch (error) {
     console.error('Error en GET /api/products:', error);

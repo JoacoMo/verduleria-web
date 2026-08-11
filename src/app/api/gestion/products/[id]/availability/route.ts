@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { parseNumericId } from '@/lib/route-params';
+import { invalidarProductos } from '@/lib/products';
 import { readJsonBody } from '@/lib/request-body';
 
 export const runtime = 'nodejs';
@@ -42,6 +43,7 @@ export async function PUT(request: Request, context: RouteContext) {
       where: { id: productId },
       data: { available: parsed.data.available },
     });
+    invalidarProductos();
 
     return NextResponse.json(product);
   } catch (error) {

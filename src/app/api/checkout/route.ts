@@ -5,6 +5,7 @@ import { checkRateLimit, getClientIp, tooManyRequestsResponse } from '@/lib/rate
 import { PRODUCT_MAX_CART_QUANTITY, isProductUnit, normalizeProductQuantity } from '@/lib/product-units';
 import { createPaymentPreference, isMercadoPagoEnabled } from '@/lib/mercadopago';
 import { readJsonBody } from '@/lib/request-body';
+import { sanitizeText } from '@/lib/sanitize';
 import { formatArs } from '@/lib/format-price';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,39 @@ type CartItem = {
   quantity: number;
 };
 
+type OrderRow = {
+  id: number;
+  total: number;
+  mpPreferenceId: string | null;
+};
+
+/** Prisma marca las violaciones de índice único con el código P2002. */
+function isUniqueConstraintError(error: unknown) {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002';
+}
+
+/**
+ * Respuesta para un pedido que ya existía (reintento).
+ *
+ * Se reconstruye el link de pago a partir del id de preferencia guardado, que es
+ * la URL canónica de Checkout Pro. Así un reintento manda al cliente al MISMO
+ * link de pago y no se generan preferencias nuevas por cada toque.
+ */
+function buildCheckoutResponse(order: OrderRow) {
+  return {
+    orderId: order.id,
+    total: order.total,
+    checkoutUrl: order.mpPreferenceId
+      ? `https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=${order.mpPreferenceId}`
+      : null,
+    transferAlias: siteConfig.transferAlias,
+    transferCbu: siteConfig.transferCbu,
+    whatsappNumber: siteConfig.whatsappNumber,
+    storeName: siteConfig.storeName,
+    yaExistia: true,
+  };
+}
+
 export async function POST(request: Request) {
   const rateLimit = checkRateLimit(`checkout:${getClientIp(request)}`, CHECKOUT_LIMIT, CHECKOUT_WINDOW_MS);
   if (!rateLimit.ok) {
@@ -28,13 +62,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = await readJsonBody<{ cart?: unknown; isDelivery?: unknown; paymentMethod?: unknown }>(request);
+  const parsed = await readJsonBody<{ cart?: unknown; isDelivery?: unknown; paymentMethod?: unknown; idempotencyKey?: unknown }>(request);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
   try {
     const cart = Array.isArray(body.cart) ? (body.cart as CartItem[]) : [];
     const deliveryMethod = body.isDelivery ? 'delivery' : 'pickup';
+
+    // Clave de idempotencia: se acota el largo y se limpia como cualquier otro
+    // dato que entra por request. Si no viene, el checkout funciona igual (sin
+    // protección contra duplicados), así que un cliente viejo no se rompe.
+    const idempotencyKey = sanitizeText(body.idempotencyKey, { maxLength: 100, singleLine: true }) || null;
 
     if (cart.length === 0) {
       return NextResponse.json({ error: 'El carrito está vacío.' }, { status: 400 });
@@ -111,17 +150,47 @@ export async function POST(request: Request) {
       );
     }
 
-    const order = await prisma.order.create({
-      data: {
-        items: itemsForOrder,
-        total,
-        status: 'pending',
-        deliveryMethod,
-      },
-    });
+    // ---- Idempotencia ----
+    // Si el navegador mandó una clave y ya existe un pedido con ella, es un
+    // reintento (doble toque, conexión lenta, botón de recargar): se devuelve el
+    // pedido que ya se había creado en vez de crear otro.
+    if (idempotencyKey) {
+      const existente = await prisma.order.findUnique({ where: { idempotencyKey } });
+      if (existente) {
+        return NextResponse.json(buildCheckoutResponse(existente));
+      }
+    }
+
+    let order;
+    try {
+      order = await prisma.order.create({
+        data: {
+          items: itemsForOrder,
+          total,
+          status: 'pending',
+          deliveryMethod,
+          idempotencyKey,
+        },
+      });
+    } catch (error) {
+      // P2002 = violación de índice único. Pasa cuando dos requests con la misma
+      // clave llegan tan juntos que ambos pasaron el findUnique de arriba. Gana
+      // el primero; el segundo devuelve ese mismo pedido.
+      if (isUniqueConstraintError(error) && idempotencyKey) {
+        const ganador = await prisma.order.findUnique({ where: { idempotencyKey } });
+        if (ganador) {
+          return NextResponse.json(buildCheckoutResponse(ganador));
+        }
+      }
+      throw error;
+    }
 
     // Si el cliente eligió pagar con tarjeta y Mercado Pago está configurado,
     // generamos la preferencia y devolvemos el link del checkout.
+    //
+    // La llamada a Mercado Pago queda FUERA de cualquier transacción de base a
+    // propósito: mantener una transacción abierta mientras se espera una API
+    // externa retiene locks todo ese tiempo y es una fuente clásica de bloqueos.
     let checkoutUrl: string | null = null;
 
     if (body.paymentMethod === 'mercadopago' && isMercadoPagoEnabled()) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
@@ -56,6 +56,10 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'mercadopago'>('transfer');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  // Clave del intento de compra en curso. Sobrevive a los re-render (por eso ref
+  // y no state) y se renueva solo cuando el pedido se registra bien.
+  const checkoutKeyRef = useRef<string | null>(null);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -286,6 +290,20 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
 
   async function handleCheckout() {
     if (cart.length === 0) return;
+    // Primera barrera contra el doble toque: mientras hay un pedido en curso no
+    // se dispara otro. La segunda barrera (la que realmente garantiza que no se
+    // dupliquen) es la clave de idempotencia que valida el servidor.
+    if (isCheckoutLoading) return;
+
+    // La clave se mantiene entre reintentos del MISMO intento de compra y se
+    // renueva recién cuando el pedido sale bien. Así, si el cliente toca dos
+    // veces o se le corta la conexión y reintenta, el servidor reconoce que es
+    // el mismo pedido y no crea uno nuevo.
+    if (!checkoutKeyRef.current) {
+      checkoutKeyRef.current = crypto.randomUUID();
+    }
+
+    setIsCheckoutLoading(true);
 
     // Se abre una pestaña en blanco de forma síncrona (dentro del gesto del click)
     // para evitar que el navegador bloquee el popup al redirigirla después del fetch.
@@ -301,6 +319,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
           cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
           isDelivery,
           paymentMethod,
+          idempotencyKey: checkoutKeyRef.current,
         }),
       });
 
@@ -310,6 +329,10 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
         alert(result.error || 'Hubo un problema al procesar el pedido.');
         return;
       }
+
+      // El pedido quedó registrado: el próximo checkout es una compra distinta y
+      // necesita una clave nueva.
+      checkoutKeyRef.current = null;
 
       // Pago con tarjeta: el cliente sigue en Mercado Pago y vuelve por back_urls.
       if (isCardPayment) {
@@ -335,14 +358,21 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
     } catch (error) {
       waTab?.close();
       console.error('Error en el checkout:', error);
+      // La clave NO se limpia acá a propósito: si el cliente reintenta, se manda
+      // la misma y el servidor devuelve el pedido que quizás sí llegó a crearse.
       alert('No se pudo registrar el pedido. Inténtalo de nuevo.');
+    } finally {
+      setIsCheckoutLoading(false);
     }
   }
 
   return (
     <>
-      <header>
-        <nav className="app-nav" aria-label="Menú principal">
+      {/* El nav va FUERA del <header> a propósito: position:sticky solo funciona
+          dentro del contenedor del elemento, y el header es position:relative, así
+          que al pasarlo la barra se iba con él. Como hermano del header, su
+          contenedor es el body y queda fija en toda la página. */}
+      <nav className="app-nav" aria-label="Menú principal">
           <div className="container app-nav-inner">
             <button
               type="button"
@@ -394,8 +424,9 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
               ) : null}
             </div>
           </div>
-        </nav>
+      </nav>
 
+      <header>
         <div className="container">
           <div className="hero-text">
             <h1><i className="fa-solid fa-carrot" />El Pampa</h1>
@@ -687,8 +718,14 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
               </div>
             ) : null}
             <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>
-              {paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
+            <button
+              className="checkout-btn"
+              onClick={handleCheckout}
+              disabled={cart.length === 0 || belowDeliveryMinimum || isCheckoutLoading}
+            >
+              {isCheckoutLoading
+                ? 'Procesando...'
+                : paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
             </button>
           </div>
           </>

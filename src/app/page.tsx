@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import StorefrontPage from '@/components/storefront-page';
 import { siteConfig } from '@/lib/site';
-import { prisma } from '@/lib/prisma';
+import { getCachedProducts } from '@/lib/products';
 import type { Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, isProductUnit } from '@/lib/product-units';
 import { formatArs } from '@/lib/format-price';
@@ -86,23 +86,7 @@ const FAQ_ENTRIES = [
 
 async function getProducts(): Promise<Product[]> {
   try {
-    // Mismo orden que /api/products: los no disponibles al final.
-    const products = await prisma.product.findMany({
-      orderBy: [{ available: 'desc' }, { name: 'asc' }],
-    });
-
-    // Prisma devuelve `unit`/`category` como string y `createdAt` como Date; el
-    // componente cliente espera los tipos ya acotados y serializables.
-    return products.map((product) => ({
-      id: product.id,
-      name: product.name,
-      price: product.price,
-      image: product.image,
-      unit: isProductUnit(product.unit) ? product.unit : 'kg',
-      category: isProductCategory(product.category) ? product.category : 'Almacén',
-      available: product.available,
-      createdAt: product.createdAt.toISOString(),
-    }));
+    return await getCachedProducts();
   } catch (error) {
     // Si la base falla, la tienda igual carga y el cliente reintenta por /api/products.
     console.error('Error al cargar productos para el render del servidor:', error);

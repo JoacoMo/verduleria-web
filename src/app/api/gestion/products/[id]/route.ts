@@ -4,6 +4,7 @@ import { verifyAdminAuth } from '@/lib/auth';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { parseProductPayload } from '@/lib/validation';
 import { parseNumericId } from '@/lib/route-params';
+import { invalidarProductos } from '@/lib/products';
 import { readJsonBody } from '@/lib/request-body';
 
 export const runtime = 'nodejs';
@@ -37,6 +38,7 @@ export async function PUT(request: Request, context: RouteContext) {
       where: { id: productId },
       data,
     });
+    invalidarProductos();
 
     return NextResponse.json(product);
   } catch (error) {
@@ -59,6 +61,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     }
 
     await prisma.product.delete({ where: { id: productId } });
+    invalidarProductos();
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     console.error('Error en DELETE /api/gestion/products/:id:', error);
