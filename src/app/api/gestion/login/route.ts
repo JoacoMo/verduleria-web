@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   if (!rateLimit.ok) {
     logSecurityEvent('rate_limit', {
       ip,
-      path: '/api/admin/login',
+      path: '/api/gestion/login',
       method: 'POST',
       reason: 'demasiados intentos de login',
     });
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     const adminPassword = process.env.ADMIN_PASSWORD;
 
     if (!adminUsername || !adminPassword) {
-      console.error('Error en POST /api/admin/login: faltan ADMIN_USERNAME o ADMIN_PASSWORD.');
+      console.error('Error en POST /api/gestion/login: faltan ADMIN_USERNAME o ADMIN_PASSWORD.');
       return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
     }
 
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       // un tipeo del dueño de alguien barriendo nombres de usuario.
       logSecurityEvent('login_fallido', {
         ip,
-        path: '/api/admin/login',
+        path: '/api/gestion/login',
         method: 'POST',
         subject: username.slice(0, 40),
       });
@@ -71,11 +71,11 @@ export async function POST(request: Request) {
 
     // Un login correcto no debería consumir el cupo de intentos.
     resetRateLimit(rateLimitKey);
-    logSecurityEvent('login_ok', { ip, path: '/api/admin/login', method: 'POST' });
+    logSecurityEvent('login_ok', { ip, path: '/api/gestion/login', method: 'POST' });
 
     return NextResponse.json({ token: createAdminToken() });
   } catch (error) {
-    console.error('Error en POST /api/admin/login:', error);
+    console.error('Error en POST /api/gestion/login:', error);
     return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
   }
 }

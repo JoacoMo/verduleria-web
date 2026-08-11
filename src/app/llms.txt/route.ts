@@ -18,10 +18,16 @@ export async function GET() {
   let productLines = '';
 
   try {
-    const products = await prisma.product.findMany({ orderBy: { name: 'asc' } });
+    const products = await prisma.product.findMany({
+      orderBy: [{ available: 'desc' }, { name: 'asc' }],
+    });
     if (products.length > 0) {
       productLines = products
-        .map((product) => `- ${product.name}: $${product.price.toFixed(2)} por ${PRODUCT_UNIT_LABELS[product.unit as keyof typeof PRODUCT_UNIT_LABELS] ?? product.unit} (${product.category})`)
+        .map((product) => {
+          const unit = PRODUCT_UNIT_LABELS[product.unit as keyof typeof PRODUCT_UNIT_LABELS] ?? product.unit;
+          const estado = product.available ? '' : ' — SIN STOCK por ahora';
+          return `- ${product.name}: $${product.price.toFixed(2)} por ${unit} (${product.category})${estado}`;
+        })
         .join('\n');
     }
   } catch (error) {

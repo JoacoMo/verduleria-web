@@ -1,14 +1,32 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { PRIVATE_PATH_PREFIXES } from '@/lib/routes';
 
 /**
  * Middleware de seguridad: CSP con nonce, resto de cabeceras y control de origen
  * para la API.
  */
 
-// Orígenes permitidos: el sitio en producción, los preview de Vercel y el dev local.
-function getAllowedOrigins() {
+/**
+ * Orígenes permitidos para la API.
+ *
+ * El primero es el origen del propio request: si el navegador pide a
+ * `https://loquesea/api/...` con `Origin: https://loquesea`, eso es same-origin y
+ * siempre es legítimo. Incluirlo evita el problema de tener que acordarse de
+ * actualizar SITE_URL al mover el sitio a un dominio propio (si no, la web se
+ * bloquearía a sí misma). Los demás cubren llamadas entre dominios propios.
+ */
+function getAllowedOrigins(request: NextRequest) {
   const origins = new Set<string>();
+
+  origins.add(request.nextUrl.origin);
+
+  // Detrás del proxy de Vercel, nextUrl puede no reflejar el host público.
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https';
+  if (forwardedHost) {
+    origins.add(`${forwardedProto}://${forwardedHost}`);
+  }
 
   const siteUrl = process.env.SITE_URL || 'https://elpampa.vercel.app';
   origins.add(siteUrl.replace(/\/$/, ''));
@@ -82,7 +100,7 @@ export function middleware(request: NextRequest) {
   const isWebhook = pathname.startsWith('/api/webhooks/');
 
   const origin = request.headers.get('origin');
-  const allowedOrigins = getAllowedOrigins();
+  const allowedOrigins = getAllowedOrigins(request);
 
   if (isApi && !isWebhook && origin) {
     // Si el request trae Origin y no es el nuestro, es una llamada cross-site
@@ -126,7 +144,7 @@ export function middleware(request: NextRequest) {
     response.headers.append('Vary', 'Origin');
   }
 
-  if (isApi || pathname === '/panel' || pathname === '/login') {
+  if (isApi || PRIVATE_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
     response.headers.set('Cache-Control', 'no-store, max-age=0');
   }
 

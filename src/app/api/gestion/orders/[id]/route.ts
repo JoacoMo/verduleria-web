@@ -26,7 +26,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     await prisma.order.delete({ where: { id: orderId } });
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    console.error('Error en DELETE /api/admin/orders/:id:', error);
+    console.error('Error en DELETE /api/gestion/orders/:id:', error);
     return NextResponse.json({ error: 'No se pudo eliminar el pedido.' }, { status: 500 });
   }
 }

@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json(orders);
   } catch (error) {
-    console.error('Error en GET /api/admin/orders:', error);
+    console.error('Error en GET /api/gestion/orders:', error);
     return NextResponse.json({ error: 'Error al obtener los pedidos.' }, { status: 500 });
   }
 }

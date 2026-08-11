@@ -933,6 +933,115 @@ main h2 i { color: var(--crate); }
   color: var(--radish);
 }
 
+/* ---- Punto de estado con parpadeo lento ----
+   Se usa en el badge "Abierto ahora" y en el "Disponible" de cada producto.
+   El color lo hereda del contenedor (currentColor), así el mismo punto sirve
+   para verde (abierto/disponible) y rojo (cerrado/sin stock). */
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  position: relative;
+  animation: status-pulse 2.4s ease-in-out infinite;
+}
+
+/* Halo que se expande y se desvanece, para que el parpadeo se note sin marear. */
+.status-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: status-halo 2.4s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes status-halo {
+  0% { transform: scale(1); opacity: 0.5; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* Respeta a quien pidió menos movimiento en el sistema operativo. */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot,
+  .status-dot::after {
+    animation: none;
+  }
+  .status-dot::after { opacity: 0; }
+}
+
+/* ---- Disponibilidad en la tarjeta de producto ---- */
+.availability-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.availability-note.available { color: var(--leaf); }
+
+.availability-note.unavailable { color: var(--radish); }
+
+.product-card-unavailable {
+  border-bottom-color: #b9b2a0;
+}
+
+.product-card-unavailable .product-card-image img {
+  filter: grayscale(0.85);
+  opacity: 0.65;
+}
+
+.unavailable-overlay {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  padding: 5px 0;
+  text-align: center;
+  background: rgba(30, 46, 34, 0.82);
+  color: var(--chalk);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---- Panel de admin: disponibilidad ---- */
+.availability-btn {
+  color: white;
+  font-size: 0.82rem;
+}
+
+.availability-btn.is-available { background-color: var(--crate); }
+.availability-btn.is-available:hover { background-color: var(--crate-dark); }
+
+.availability-btn.is-unavailable { background-color: var(--leaf); }
+.availability-btn.is-unavailable:hover { background-color: var(--leaf-dark); }
+
+.product-item-unavailable {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.sin-stock-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(193, 67, 46, 0.14);
+  color: var(--radish);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .contact-info {
   margin-top: 20px;
 }
@@ -1276,5 +1385,32 @@ button {
   .unit-toggle button,
   .delivery-toggle button {
     padding: 10px 12px;
+  }
+}
+/* ---- Áreas táctiles ----
+   En pantallas táctiles los botones chicos son difíciles de acertar. Se apunta
+   al mínimo de 44x44 que recomienda Apple, sin agrandar el diseño en desktop:
+   `pointer: coarse` aplica solo a dedos, no a mouse. */
+@media (pointer: coarse) {
+  .grid-qty-controls button,
+  .qty-controls button,
+  .remove-from-cart-btn,
+  .cart-drawer-item .remove-from-cart-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .grid-qty-controls button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .cart-drawer-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .category-filter-btn {
+    min-height: 44px;
   }
 }

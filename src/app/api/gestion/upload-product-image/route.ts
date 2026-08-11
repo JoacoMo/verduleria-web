@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       url: publicUrl,
     });
   } catch (error) {
-    console.error('Error en /api/admin/upload-product-image:', error);
+    console.error('Error en /api/gestion/upload-product-image:', error);
     return NextResponse.json({ error: 'No se pudo procesar la imagen.' }, { status: 500 });
   }
 }

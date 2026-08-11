@@ -93,9 +93,29 @@ Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya so
 ## Rutas principales
 
 - `/` tienda
-- `/login` ingreso al panel
-- `/panel` administración
+- `/trastienda` ingreso al panel
+- `/trastienda/gestion` administración
 - `/success`, `/failure`, `/pending` páginas de estado
+
+Las rutas privadas se llamaban `/login` y `/panel`. Se renombraron para que los bots
+que barren `/admin`, `/login` y `/wp-admin` no las encuentren. **No es una medida de
+seguridad real** (cualquiera que mire el JavaScript las ve): lo que protege el panel
+sigue siendo el JWT, el rate limiting y la contraseña. Por eso tampoco se listan en
+`robots.txt`, que es público: se sacan del índice con `noindex` en cada página.
+
+Están centralizadas en `src/lib/routes.ts`; si se vuelven a cambiar, se toca solo ahí.
+
+## Disponibilidad de productos
+
+Cada producto tiene un campo `available`. Desde el panel se cambia con un botón, sin
+entrar a editar. Un producto marcado sin stock:
+
+- aparece **al final** de la tienda, no arriba;
+- se muestra en gris con el cartel "Sin stock" y el botón deshabilitado;
+- no se puede agregar al carrito, y si alguien fuerza el request el checkout lo
+  rechaza con 409;
+- no se ofrece como producto relacionado;
+- figura como `OutOfStock` en los datos estructurados y en `/llms.txt`.
 
 ## Mercado Pago (opcional)
 

@@ -61,6 +61,18 @@ export async function POST(request: Request) {
     const itemsForOrder: Array<{ id: number; name: string; price: number; quantity: number; unit: string }> = [];
     let total = 0;
 
+    // Si algo quedó sin stock mientras el cliente armaba el carrito, se corta acá:
+    // el front ya no deja agregarlos, pero no alcanza con esa validación.
+    const unavailable = dbProducts.filter((product) => !product.available);
+    if (unavailable.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Estos productos se quedaron sin stock: ${unavailable.map((p) => p.name).join(', ')}. Sacalos del carrito para seguir.`,
+        },
+        { status: 409 },
+      );
+    }
+
     for (const productId of productIds) {
       const product = dbProducts.find((item) => item.id === productId);
       if (!product) continue;

@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const product = await prisma.product.create({ data });
     return NextResponse.json(product, { status: 201 });
   } catch (error) {
-    console.error('Error en POST /api/admin/products:', error);
+    console.error('Error en POST /api/gestion/products:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error al crear el producto.' }, { status: 400 });
   }
 }

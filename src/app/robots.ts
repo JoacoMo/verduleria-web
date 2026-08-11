@@ -20,7 +20,12 @@ const AI_CRAWLERS = [
 ];
 
 export default function robots(): MetadataRoute.Robots {
-  const disallow = ['/panel', '/login', '/api/'];
+  // Antes acá se listaban `/panel` y `/login`. robots.txt es público, así que eso
+  // era publicar la dirección de la puerta de servicio: el primer lugar donde
+  // mira cualquiera que quiera encontrar el panel. Ahora solo se bloquea `/api/`
+  // (que no revela nada) y las páginas privadas se sacan del índice con la
+  // metadata `noindex` de cada una.
+  const disallow = ['/api/'];
 
   return {
     rules: [

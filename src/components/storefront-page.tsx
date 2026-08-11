@@ -133,6 +133,8 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   function addToCart(productId: number, quantityToAdd?: number) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
+    // Nada sin stock entra al carrito. El servidor lo vuelve a chequear igual.
+    if (!product.available) return;
 
     const quantity = quantityToAdd ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
 
@@ -219,7 +221,8 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const relatedProducts = useMemo(() => {
     if (cart.length === 0) return [];
     const cartIds = new Set(cart.map((item) => item.id));
-    return products.filter((product) => !cartIds.has(product.id)).slice(0, 4);
+    // No se recomienda lo que no se puede comprar.
+    return products.filter((product) => !cartIds.has(product.id) && product.available).slice(0, 4);
   }, [products, cart]);
 
   function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
@@ -367,22 +370,42 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
               const selectedQuantity = getGridQuantity(product);
               const step = PRODUCT_CART_STEP[product.unit];
               return (
-                <div className="product-card" key={product.id}>
+                <div className={`product-card ${product.available ? '' : 'product-card-unavailable'}`} key={product.id}>
                   <div className="product-card-image">
                     <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                     <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
+                    {product.available ? null : <span className="unavailable-overlay">Sin stock</span>}
                   </div>
                   <div className="product-info">
                     <h3>{product.name}</h3>
+                    {product.available ? (
+                      <p className="availability-note available">
+                        <span className="status-dot" aria-hidden="true" />
+                        Disponible
+                      </p>
+                    ) : (
+                      <p className="availability-note unavailable">
+                        <span className="status-dot" aria-hidden="true" />
+                        No disponible por ahora
+                      </p>
+                    )}
                     <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                    <div className="grid-qty-controls">
-                      <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
-                      <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
-                      <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
-                    </div>
-                    <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
-                      <i className="fa-solid fa-cart-plus" /> Añadir al carrito
-                    </button>
+                    {product.available ? (
+                      <>
+                        <div className="grid-qty-controls">
+                          <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
+                          <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
+                          <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
+                        </div>
+                        <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
+                          <i className="fa-solid fa-cart-plus" /> Añadir al carrito
+                        </button>
+                      </>
+                    ) : (
+                      <button className="add-to-cart-btn" disabled>
+                        Sin stock por ahora
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -407,7 +430,8 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
             <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
             {storeStatus ? (
               <span className={`store-status-badge ${storeStatus.open ? 'open' : 'closed'}`}>
-                <i className="fa-solid fa-circle" /> {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
+                <span className="status-dot" aria-hidden="true" />
+                {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
               </span>
             ) : null}
           </div>

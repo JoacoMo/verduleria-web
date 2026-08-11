@@ -40,7 +40,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
     return NextResponse.json(product);
   } catch (error) {
-    console.error('Error en PUT /api/admin/products/:id:', error);
+    console.error('Error en PUT /api/gestion/products/:id:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error al actualizar el producto.' }, { status: 400 });
   }
 }
@@ -61,7 +61,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     await prisma.product.delete({ where: { id: productId } });
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    console.error('Error en DELETE /api/admin/products/:id:', error);
+    console.error('Error en DELETE /api/gestion/products/:id:', error);
     return NextResponse.json({ error: 'Error al eliminar el producto.' }, { status: 500 });
   }
 }

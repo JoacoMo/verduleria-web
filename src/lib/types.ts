@@ -8,6 +8,7 @@ export type Product = {
   image: string;
   unit: ProductUnit;
   category: ProductCategory;
+  available: boolean;
   createdAt?: string;
 };
 
@@ -56,6 +57,7 @@ export type ProductPayload = {
   image?: string;
   unit?: ProductUnit;
   category?: ProductCategory;
+  available?: boolean;
 };
 
 export type OrderConfirmation = StoreInfo & {

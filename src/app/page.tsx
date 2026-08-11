@@ -86,7 +86,10 @@ const FAQ_ENTRIES = [
 
 async function getProducts(): Promise<Product[]> {
   try {
-    const products = await prisma.product.findMany({ orderBy: { name: 'asc' } });
+    // Mismo orden que /api/products: los no disponibles al final.
+    const products = await prisma.product.findMany({
+      orderBy: [{ available: 'desc' }, { name: 'asc' }],
+    });
 
     // Prisma devuelve `unit`/`category` como string y `createdAt` como Date; el
     // componente cliente espera los tipos ya acotados y serializables.
@@ -97,6 +100,7 @@ async function getProducts(): Promise<Product[]> {
       image: product.image,
       unit: isProductUnit(product.unit) ? product.unit : 'kg',
       category: isProductCategory(product.category) ? product.category : 'Almacén',
+      available: product.available,
       createdAt: product.createdAt.toISOString(),
     }));
   } catch (error) {
@@ -155,7 +159,9 @@ function buildStructuredData(products: Product[]) {
           position: index + 1,
           price: product.price,
           priceCurrency: 'ARS',
-          availability: 'https://schema.org/InStock',
+          availability: product.available
+            ? 'https://schema.org/InStock'
+            : 'https://schema.org/OutOfStock',
           eligibleQuantity: {
             '@type': 'QuantitativeValue',
             unitText: PRODUCT_UNIT_LABELS[product.unit],

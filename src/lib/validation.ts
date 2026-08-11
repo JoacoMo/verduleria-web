@@ -14,6 +14,7 @@ export type ProductCreatePayload = {
   image: string;
   unit: 'kg' | 'g' | 'unidad';
   category: ProductCategory;
+  available: boolean;
 };
 
 export type ProductUpdatePayload = Partial<ProductCreatePayload>;
@@ -24,6 +25,7 @@ type ProductPayloadInput = {
   image?: unknown;
   unit?: unknown;
   category?: unknown;
+  available?: unknown;
 };
 
 /**
@@ -94,6 +96,17 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
       throw new Error('La categoría debe ser Frutas, Verduras, Almacén u Ofertas.');
     }
     data.category = body.category;
+  }
+
+  if (!partial || body.available !== undefined) {
+    // Al crear, si no viene el campo el producto nace disponible.
+    if (body.available === undefined) {
+      data.available = true;
+    } else if (typeof body.available === 'boolean') {
+      data.available = body.available;
+    } else {
+      throw new Error('La disponibilidad debe ser verdadero o falso.');
+    }
   }
 
   return data;

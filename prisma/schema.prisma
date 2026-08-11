@@ -15,6 +15,9 @@ model Product {
   image     String
   unit      String   @default("kg")
   category  String   @default("Almacén")
+  // Lo maneja el dueño desde el panel. Los que están en false se muestran
+  // al final de la tienda y no se pueden agregar al carrito.
+  available Boolean  @default(true)
   createdAt DateTime @default(now())
 }
 
