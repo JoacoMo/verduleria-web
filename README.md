@@ -97,6 +97,31 @@ Si después cambiás algo, solo volvés a hacer `git push` y Vercel redeploya so
 - `/panel` administración
 - `/success`, `/failure`, `/pending` páginas de estado
 
+## Mercado Pago (opcional)
+
+La tienda funciona sin Mercado Pago: si `MP_ACCESS_TOKEN` está vacío, el botón de
+tarjeta no aparece y solo se ofrece transferencia.
+
+Para activarlo:
+
+1. Entrá a https://www.mercadopago.com.ar/developers/panel/app y creá una aplicación.
+2. Copiá el **Access Token** de producción a `MP_ACCESS_TOKEN` (en Vercel también).
+3. En el panel de MP, andá a **Webhooks > Configurar notificaciones** y cargá la URL
+   `https://elpampa.vercel.app/api/webhooks/mercadopago`, marcando el evento **Pagos**.
+4. Copiá la **clave secreta** que te da esa pantalla a `MP_WEBHOOK_SECRET`.
+
+El webhook valida la firma HMAC de cada notificación y consulta el pago contra la API
+de MP antes de tocar el pedido, así que nadie puede marcar pedidos como pagados
+mandando un POST a esa URL.
+
+## Protección contra ataques
+
+El login y el checkout tienen un limitador de intentos por IP, pero es **en memoria**:
+en Vercel cada instancia serverless tiene la suya, así que no es un límite global exacto.
+Para protección real conviene activar el **Firewall de Vercel** (Project Settings >
+Firewall): ahí se configuran reglas de rate limiting a nivel edge y el *Attack Challenge
+Mode*, sin tocar código.
+
 ## Notas
 
 - El panel sigue usando token en `localStorage` y JWT firmado por el backend.

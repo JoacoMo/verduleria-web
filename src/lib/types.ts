@@ -47,6 +47,7 @@ export type StoreInfo = {
   deliveryMaxWeightKg: number;
   deliveryMinPurchase: number;
   deliveryFreeThreshold: number;
+  mercadoPagoEnabled?: boolean;
 };
 
 export type ProductPayload = {

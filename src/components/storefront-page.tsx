@@ -52,6 +52,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const [storeInfo, setStoreInfo] = useState<StoreInfo>(DEFAULT_STORE_INFO);
   const [orderConfirmation, setOrderConfirmation] = useState<OrderConfirmation | null>(null);
   const [isDelivery, setIsDelivery] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'mercadopago'>('transfer');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
   const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
@@ -252,7 +253,9 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
 
     // Se abre una pestaña en blanco de forma síncrona (dentro del gesto del click)
     // para evitar que el navegador bloquee el popup al redirigirla después del fetch.
-    const waTab = window.open('', '_blank');
+    // Con tarjeta redirigimos la pestaña actual a Mercado Pago, así que no hace falta.
+    const isCardPayment = paymentMethod === 'mercadopago';
+    const waTab = isCardPayment ? null : window.open('', '_blank');
 
     try {
       const response = await fetch('/api/checkout', {
@@ -261,6 +264,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
         body: JSON.stringify({
           cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
           isDelivery,
+          paymentMethod,
         }),
       });
 
@@ -271,13 +275,23 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
         return;
       }
 
+      // Pago con tarjeta: el cliente sigue en Mercado Pago y vuelve por back_urls.
+      if (isCardPayment) {
+        if (result.checkoutUrl) {
+          setCart([]);
+          window.location.href = result.checkoutUrl;
+          return;
+        }
+        alert('No pudimos generar el link de pago. Podés pagar por transferencia.');
+      }
+
       const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
       const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
       setOrderConfirmation({ ...result, items, whatsappUrl: waLink });
 
       if (waTab) {
         waTab.location.href = waLink;
-      } else {
+      } else if (!isCardPayment) {
         window.open(waLink, '_blank', 'noopener,noreferrer');
       }
 
@@ -551,8 +565,20 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                 </div>
               )
             ) : null}
+            {storeInfo.mercadoPagoEnabled ? (
+              <div className="payment-toggle">
+                <button type="button" className={paymentMethod === 'transfer' ? 'active' : ''} onClick={() => setPaymentMethod('transfer')}>
+                  <i className="fa-solid fa-building-columns" /> Transferencia
+                </button>
+                <button type="button" className={paymentMethod === 'mercadopago' ? 'active' : ''} onClick={() => setPaymentMethod('mercadopago')}>
+                  <i className="fa-solid fa-credit-card" /> Tarjeta / Mercado Pago
+                </button>
+              </div>
+            ) : null}
             <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>Pedir por transferencia</button>
+            <button className="checkout-btn" onClick={handleCheckout} disabled={cart.length === 0 || belowDeliveryMinimum}>
+              {paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
+            </button>
           </div>
           </>
           )}

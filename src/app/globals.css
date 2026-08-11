@@ -589,6 +589,34 @@ main h2 i { color: var(--crate); }
   color: white;
 }
 
+.payment-toggle {
+  display: flex;
+  border: 1px solid var(--leaf);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.payment-toggle button {
+  flex: 1;
+  background: #fff;
+  border: none;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--leaf-dark);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.payment-toggle button.active {
+  background: var(--leaf);
+  color: white;
+}
+
 .delivery-notice {
   display: flex;
   gap: 8px;

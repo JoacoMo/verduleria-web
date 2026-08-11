@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { siteConfig } from '@/lib/site';
 import { checkRateLimit, getClientIp, tooManyRequestsResponse } from '@/lib/rate-limit';
 import { PRODUCT_MAX_CART_QUANTITY, isProductUnit, normalizeProductQuantity } from '@/lib/product-units';
+import { createPaymentPreference, isMercadoPagoEnabled } from '@/lib/mercadopago';
+import { formatArs } from '@/lib/format-price';
 
 export const runtime = 'nodejs';
 
@@ -88,7 +90,7 @@ export async function POST(request: Request) {
 
     if (deliveryMethod === 'delivery' && total < siteConfig.deliveryMinPurchase) {
       return NextResponse.json(
-        { error: `El pedido mínimo para envío es $${siteConfig.deliveryMinPurchase.toFixed(2)}.` },
+        { error: `El pedido mínimo para envío es ${formatArs(siteConfig.deliveryMinPurchase)}.` },
         { status: 400 },
       );
     }
@@ -102,9 +104,33 @@ export async function POST(request: Request) {
       },
     });
 
+    // Si el cliente eligió pagar con tarjeta y Mercado Pago está configurado,
+    // generamos la preferencia y devolvemos el link del checkout.
+    let checkoutUrl: string | null = null;
+
+    if (body.paymentMethod === 'mercadopago' && isMercadoPagoEnabled()) {
+      try {
+        const preference = await createPaymentPreference({
+          orderId: order.id,
+          items: itemsForOrder,
+          total,
+        });
+        checkoutUrl = preference.checkoutUrl;
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { mpPreferenceId: preference.preferenceId },
+        });
+      } catch (error) {
+        // El pedido ya quedó registrado: si falla el link de pago, el cliente
+        // todavía puede pagar por transferencia, así que no rompemos el checkout.
+        console.error('No se pudo crear la preferencia de pago:', error);
+      }
+    }
+
     return NextResponse.json({
       orderId: order.id,
       total,
+      checkoutUrl,
       transferAlias: siteConfig.transferAlias,
       transferCbu: siteConfig.transferCbu,
       whatsappNumber: siteConfig.whatsappNumber,
