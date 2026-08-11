@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
 import { parseProductPayload } from '@/lib/validation';
+import { parseNumericId } from '@/lib/route-params';
 
 export const runtime = 'nodejs';
 
@@ -14,14 +15,18 @@ export async function PUT(request: Request, context: RouteContext) {
   if (!auth.ok) return auth.response;
 
   try {
-    const { id } = await context.params;
+    const productId = parseNumericId((await context.params).id);
+    if (productId === null) {
+      return NextResponse.json({ error: 'Id de producto inválido.' }, { status: 400 });
+    }
+
     const data = parseProductPayload(await request.json(), { partial: true });
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ error: 'No hay cambios para guardar.' }, { status: 400 });
     }
 
     const product = await prisma.product.update({
-      where: { id: Number(id) },
+      where: { id: productId },
       data,
     });
 
@@ -37,8 +42,12 @@ export async function DELETE(request: Request, context: RouteContext) {
   if (!auth.ok) return auth.response;
 
   try {
-    const { id } = await context.params;
-    await prisma.product.delete({ where: { id: Number(id) } });
+    const productId = parseNumericId((await context.params).id);
+    if (productId === null) {
+      return NextResponse.json({ error: 'Id de producto inválido.' }, { status: 400 });
+    }
+
+    await prisma.product.delete({ where: { id: productId } });
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     console.error('Error en DELETE /api/admin/products/:id:', error);

@@ -46,6 +46,7 @@ export type StoreInfo = {
   deliveryProviderName: string;
   deliveryMaxWeightKg: number;
   deliveryMinPurchase: number;
+  deliveryFreeThreshold: number;
 };
 
 export type ProductPayload = {

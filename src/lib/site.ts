@@ -14,4 +14,6 @@ export const siteConfig = {
   deliveryProviderName: process.env.DELIVERY_PROVIDER_NAME || 'Uber Moto',
   deliveryMaxWeightKg: Number(process.env.DELIVERY_MAX_WEIGHT_KG) || 7,
   deliveryMinPurchase: Number(process.env.DELIVERY_MIN_PURCHASE) || 10000,
+  // A partir de este total el envío corre por cuenta del local.
+  deliveryFreeThreshold: Number(process.env.DELIVERY_FREE_THRESHOLD) || 20000,
 };

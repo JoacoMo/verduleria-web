@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
+import { parseNumericId } from '@/lib/route-params';
 
 export const runtime = 'nodejs';
 
@@ -13,7 +14,11 @@ export async function DELETE(request: Request, context: RouteContext) {
   if (!auth.ok) return auth.response;
 
   try {
-    const orderId = Number((await context.params).id);
+    const orderId = parseNumericId((await context.params).id);
+    if (orderId === null) {
+      return NextResponse.json({ error: 'Id de pedido inválido.' }, { status: 400 });
+    }
+
     await prisma.order.delete({ where: { id: orderId } });
     return new NextResponse(null, { status: 204 });
   } catch (error) {
