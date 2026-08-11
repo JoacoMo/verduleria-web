@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 import { parseNumericId } from '@/lib/route-params';
 
 export const runtime = 'nodejs';
@@ -12,6 +13,9 @@ type RouteContext = {
 export async function DELETE(request: Request, context: RouteContext) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
+
+  const limited = enforceRateLimit(request, "adminWrite");
+  if (limited) return limited;
 
   try {
     const orderId = parseNumericId((await context.params).id);

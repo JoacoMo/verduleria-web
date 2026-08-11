@@ -4,6 +4,7 @@ import { siteConfig } from '@/lib/site';
 import { checkRateLimit, getClientIp, tooManyRequestsResponse } from '@/lib/rate-limit';
 import { PRODUCT_MAX_CART_QUANTITY, isProductUnit, normalizeProductQuantity } from '@/lib/product-units';
 import { createPaymentPreference, isMercadoPagoEnabled } from '@/lib/mercadopago';
+import { readJsonBody } from '@/lib/request-body';
 import { formatArs } from '@/lib/format-price';
 
 export const runtime = 'nodejs';
@@ -27,8 +28,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const parsed = await readJsonBody<{ cart?: unknown; isDelivery?: unknown; paymentMethod?: unknown }>(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
+
   try {
-    const body = await request.json();
     const cart = Array.isArray(body.cart) ? (body.cart as CartItem[]) : [];
     const deliveryMethod = body.isDelivery ? 'delivery' : 'pickup';
 

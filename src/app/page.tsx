@@ -7,10 +7,15 @@ import { PRODUCT_UNIT_LABELS, isProductUnit } from '@/lib/product-units';
 import { formatArs } from '@/lib/format-price';
 import { isProductCategory } from '@/lib/product-categories';
 
-// Se regenera cada 10 minutos: el HTML llega ya con los productos (bueno para
-// buscadores y para los crawlers de IA, que no ejecutan JavaScript) sin pegarle
-// a la base en cada visita.
-export const revalidate = 600;
+// La página se renderiza en el servidor en cada visita (no es estática) porque la
+// CSP con nonce necesita un valor distinto por request, y el nonce se lee de las
+// cabeceras. El HTML sigue llegando con los productos ya incluidos, que es lo que
+// necesitan los buscadores y los crawlers de IA.
+//
+// Costo: cada visita ejecuta una función y una consulta a la base, en vez de salir
+// de la CDN. Para el tráfico de una verdulería de barrio es razonable; si algún día
+// molesta, la alternativa es volver a 'unsafe-inline' en script-src (CSP más débil).
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'El Pampa | Verdulería y Frutería a Domicilio en Córdoba',
@@ -197,6 +202,12 @@ export default async function Page() {
 
   return (
     <>
+      {/*
+        Sin nonce a propósito: `application/ld+json` es un bloque de datos, no
+        JavaScript ejecutable, así que la CSP no lo bloquea. Ponerle el nonce
+        además rompía la hidratación, porque React no lo serializa al cliente
+        y quedaba nonce="" contra el del servidor.
+      */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}

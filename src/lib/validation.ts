@@ -1,5 +1,12 @@
 import { isProductUnit } from './product-units';
 import { isProductCategory, type ProductCategory } from './product-categories';
+import { sanitizeNumber, sanitizeText } from './sanitize';
+
+const MAX_NAME_LENGTH = 120;
+const MAX_IMAGE_URL_LENGTH = 2048;
+// Techo de cordura: ningún producto de verdulería vale más que esto, y evita
+// que un error de tipeo (o un request armado a mano) meta un precio absurdo.
+const MAX_PRICE = 10_000_000;
 
 export type ProductCreatePayload = {
   name: string;
@@ -25,7 +32,7 @@ type ProductPayloadInput = {
  * o `data:text/html,...`, que después terminan renderizadas en la tienda.
  */
 function parseImageUrl(value: unknown) {
-  const image = typeof value === 'string' ? value.trim() : '';
+  const image = sanitizeText(value, { maxLength: MAX_IMAGE_URL_LENGTH, singleLine: true }) ?? '';
   if (!image) return '';
 
   // Ruta relativa propia (ej: /product-placeholder.svg). Se descarta `//host`
@@ -56,7 +63,7 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
   const data: ProductUpdatePayload = {};
 
   if (!partial || body.name !== undefined) {
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const name = sanitizeText(body.name, { maxLength: MAX_NAME_LENGTH, singleLine: true });
     if (!name) {
       throw new Error('El nombre del producto es obligatorio.');
     }
@@ -64,9 +71,9 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
   }
 
   if (!partial || body.price !== undefined) {
-    const price = Number(body.price);
-    if (!Number.isFinite(price) || price < 0) {
-      throw new Error('El precio debe ser un número válido mayor o igual a 0.');
+    const price = sanitizeNumber(body.price, { min: 0, max: MAX_PRICE, decimals: 2 });
+    if (price === null) {
+      throw new Error(`El precio debe ser un número entre 0 y ${MAX_PRICE}.`);
     }
     data.price = price;
   }

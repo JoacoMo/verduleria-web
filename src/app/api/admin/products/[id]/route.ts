@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 import { parseProductPayload } from '@/lib/validation';
 import { parseNumericId } from '@/lib/route-params';
+import { readJsonBody } from '@/lib/request-body';
 
 export const runtime = 'nodejs';
 
@@ -14,13 +16,19 @@ export async function PUT(request: Request, context: RouteContext) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
 
+  const limited = enforceRateLimit(request, 'adminWrite');
+  if (limited) return limited;
+
   try {
     const productId = parseNumericId((await context.params).id);
     if (productId === null) {
       return NextResponse.json({ error: 'Id de producto inválido.' }, { status: 400 });
     }
 
-    const data = parseProductPayload(await request.json(), { partial: true });
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) return parsed.response;
+
+    const data = parseProductPayload(parsed.data, { partial: true });
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ error: 'No hay cambios para guardar.' }, { status: 400 });
     }
@@ -40,6 +48,9 @@ export async function PUT(request: Request, context: RouteContext) {
 export async function DELETE(request: Request, context: RouteContext) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
+
+  const limited = enforceRateLimit(request, 'adminWrite');
+  if (limited) return limited;
 
   try {
     const productId = parseNumericId((await context.params).id);

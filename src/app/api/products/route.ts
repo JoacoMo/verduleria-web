@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -15,7 +16,10 @@ const DEFAULT_PRODUCTS_FALLBACK = [
   { id: -3, name: 'Ajo', price: 1200, image: '/product-placeholder.svg', unit: 'unidad', category: 'Verduras' },
 ];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = enforceRateLimit(request, 'publicRead');
+  if (limited) return limited;
+
   try {
     const products = await prisma.product.findMany({ orderBy: { name: 'asc' } });
     if (products.length === 0) {

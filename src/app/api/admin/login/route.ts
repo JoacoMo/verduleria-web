@@ -1,19 +1,28 @@
 import { NextResponse } from 'next/server';
 import { createAdminToken, safeCompare } from '@/lib/auth';
-import { checkRateLimit, getClientIp, resetRateLimit, tooManyRequestsResponse } from '@/lib/rate-limit';
+import { RATE_LIMITS, checkRateLimit, getClientIp, resetRateLimit, tooManyRequestsResponse } from '@/lib/rate-limit';
+import { logSecurityEvent } from '@/lib/security-log';
+import { sanitizeText } from '@/lib/sanitize';
+import { readJsonBody } from '@/lib/request-body';
 
 export const runtime = 'nodejs';
 
-// 8 intentos cada 10 minutos por IP. Suficiente para equivocarse tipeando,
-// muy poco para probar contraseñas a lo bruto.
-const LOGIN_ATTEMPT_LIMIT = 8;
-const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+// Tope de largo antes de tocar nada: no tiene sentido hashear un "usuario"
+// de 10 MB que alguien mandó para hacernos gastar CPU.
+const MAX_CREDENTIAL_LENGTH = 200;
 
 export async function POST(request: Request) {
-  const rateLimitKey = `login:${getClientIp(request)}`;
-  const rateLimit = checkRateLimit(rateLimitKey, LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_MS);
+  const ip = getClientIp(request);
+  const rateLimitKey = `login:${ip}`;
+  const rateLimit = checkRateLimit(rateLimitKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
 
   if (!rateLimit.ok) {
+    logSecurityEvent('rate_limit', {
+      ip,
+      path: '/api/admin/login',
+      method: 'POST',
+      reason: 'demasiados intentos de login',
+    });
     return tooManyRequestsResponse(
       rateLimit.retryAfterSeconds,
       'Demasiados intentos fallidos. Esperá unos minutos y probá de nuevo.',
@@ -29,9 +38,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
     }
 
-    const { username, password } = await request.json();
+    const parsed = await readJsonBody<{ username?: unknown; password?: unknown }>(request);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.data;
 
-    if (typeof username !== 'string' || typeof password !== 'string') {
+    // El usuario se limpia (control chars, invisibles, largo) antes de compararlo.
+    // La contraseña NO se toca más allá del tope de largo: recortarla o normalizarla
+    // cambiaría el valor que el dueño realmente tipeó.
+    const username = sanitizeText(body?.username, { maxLength: MAX_CREDENTIAL_LENGTH, singleLine: true });
+    const password = typeof body?.password === 'string' ? body.password : null;
+
+    if (username === null || password === null || password.length > MAX_CREDENTIAL_LENGTH) {
       return NextResponse.json({ error: 'Usuario o contraseña incorrectos.' }, { status: 401 });
     }
 
@@ -41,11 +58,20 @@ export async function POST(request: Request) {
     const passwordOk = safeCompare(password, adminPassword);
 
     if (!usernameOk || !passwordOk) {
+      // Se registra el usuario probado (no la contraseña) para poder distinguir
+      // un tipeo del dueño de alguien barriendo nombres de usuario.
+      logSecurityEvent('login_fallido', {
+        ip,
+        path: '/api/admin/login',
+        method: 'POST',
+        subject: username.slice(0, 40),
+      });
       return NextResponse.json({ error: 'Usuario o contraseña incorrectos.' }, { status: 401 });
     }
 
     // Un login correcto no debería consumir el cupo de intentos.
     resetRateLimit(rateLimitKey);
+    logSecurityEvent('login_ok', { ip, path: '/api/admin/login', method: 'POST' });
 
     return NextResponse.json({ token: createAdminToken() });
   } catch (error) {

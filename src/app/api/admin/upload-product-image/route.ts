@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -81,6 +82,9 @@ async function ensureBucketExists() {
 export async function POST(request: Request) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
+
+  const limited = enforceRateLimit(request, 'upload');
+  if (limited) return limited;
 
   try {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {

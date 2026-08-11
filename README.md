@@ -114,6 +114,33 @@ El webhook valida la firma HMAC de cada notificación y consulta el pago contra 
 de MP antes de tocar el pedido, así que nadie puede marcar pedidos como pagados
 mandando un POST a esa URL.
 
+## Base de datos: Row Level Security
+
+Supabase publica automáticamente todas las tablas del schema `public` por su API
+REST, usando los roles `anon` y `authenticated`. La *anon key* está pensada para ser
+pública, así que hay que asumir que cualquiera la puede conseguir.
+
+La migración `20260811050000_enable_row_level_security` deja RLS activo en todas las
+tablas, sin políticas (denegar por defecto), y revoca los permisos de esos dos roles.
+También cambia los privilegios por defecto para que **ninguna tabla nueva nazca
+accesible**.
+
+La app no se ve afectada porque se conecta con Prisma como el rol `postgres`, que es
+dueño de las tablas y no está sujeto a RLS.
+
+Si algún día se agrega una tabla, verificá que quede con RLS:
+
+```bash
+npx prisma migrate deploy
+```
+
+## Logs de seguridad
+
+Los eventos sospechosos se escriben como JSON de una línea con la clave `secEvent`.
+En Vercel: **Project > Logs**, y filtrás por `secEvent`. Se registran logins fallidos
+(con el usuario probado, nunca la contraseña), rate limits alcanzados, tokens
+inválidos, orígenes bloqueados y firmas de webhook inválidas.
+
 ## Protección contra ataques
 
 El login y el checkout tienen un limitador de intentos por IP, pero es **en memoria**:

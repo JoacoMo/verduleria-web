@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -17,6 +18,9 @@ function getArgentinaTodayDateParam() {
 export async function GET(request: Request) {
   const auth = verifyAdminAuth(request.headers.get('authorization'));
   if (!auth.ok) return auth.response;
+
+  const limited = enforceRateLimit(request, 'adminWrite');
+  if (limited) return limited;
 
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get('date');

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getPayment, verifyWebhookSignature } from '@/lib/mercadopago';
+import { enforceRateLimit, getClientIp } from '@/lib/rate-limit';
+import { logSecurityEvent } from '@/lib/security-log';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +20,9 @@ const STATUS_BY_MP_STATUS: Record<string, 'paid' | 'pending' | 'cancelled' | 'fa
 };
 
 export async function POST(request: Request) {
+  const limited = enforceRateLimit(request, 'webhook');
+  if (limited) return limited;
+
   const url = new URL(request.url);
   const dataId = url.searchParams.get('data.id') ?? url.searchParams.get('id');
 
@@ -28,7 +33,12 @@ export async function POST(request: Request) {
   });
 
   if (!signatureOk) {
-    console.error('Webhook de Mercado Pago con firma inválida.');
+    logSecurityEvent('webhook_firma_invalida', {
+      ip: getClientIp(request),
+      path: '/api/webhooks/mercadopago',
+      method: 'POST',
+      subject: dataId ?? undefined,
+    });
     return NextResponse.json({ error: 'Firma inválida.' }, { status: 401 });
   }
 
