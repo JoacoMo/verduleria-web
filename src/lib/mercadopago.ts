@@ -138,7 +138,9 @@ export function verifyWebhookSignature(params: {
   const receivedHash = parts.get('v1');
   if (!ts || !receivedHash) return false;
 
-  const manifest = `id:${params.dataId};request-id:${params.requestId ?? ''};ts:${ts};`;
+  // MP firma el id en minúsculas: si llega alfanumérico en mayúsculas, sin
+  // pasarlo a minúsculas la firma de una notificación legítima no coincide.
+  const manifest = `id:${params.dataId.toLowerCase()};request-id:${params.requestId ?? ''};ts:${ts};`;
   const expectedHash = createHmac('sha256', secret).update(manifest).digest('hex');
 
   const receivedBuffer = Buffer.from(receivedHash, 'utf8');

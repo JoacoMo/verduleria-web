@@ -1,5 +1,7 @@
 const TIMEZONE = 'America/Argentina/Cordoba';
 const ORDER_CUTOFF_MINUTES = 19 * 60;
+/** Texto del horario de corte para mostrar en la tienda (tiene que coincidir con ORDER_CUTOFF_MINUTES). */
+export const ORDER_CUTOFF_LABEL = '19:00';
 
 // Ventanas de atención en minutos desde las 00:00, por día (0 = domingo).
 // Si cambian los horarios del local, actualizar acá además de

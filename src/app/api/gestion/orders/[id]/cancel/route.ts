@@ -23,15 +23,24 @@ export async function PUT(request: Request, context: RouteContext) {
       return NextResponse.json({ error: 'Id de pedido inválido.' }, { status: 400 });
     }
 
-    const order = await prisma.order.findUnique({ where: { id: orderId } });
-    if (!order) {
-      return NextResponse.json({ error: 'Pedido no encontrado.' }, { status: 404 });
-    }
-    if (order.status !== 'pending') {
+    // El cambio de estado es condicional y en una sola sentencia: si justo entre
+    // que el dueño abrió el panel y tocó el botón llegó el webhook de Mercado
+    // Pago (o se tocó dos veces), no se pisa un estado que ya cambió.
+    const result = await prisma.order.updateMany({
+      // 'failed' también entra: si el pago con tarjeta se rechazó y el cliente
+      // terminó pagando por transferencia, el dueño tiene que poder confirmarlo.
+      where: { id: orderId, status: { in: ['pending', 'failed'] } },
+      data: { status: 'cancelled' },
+    });
+
+    if (result.count === 0) {
+      const order = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true } });
+      if (!order) {
+        return NextResponse.json({ error: 'Pedido no encontrado.' }, { status: 404 });
+      }
       return NextResponse.json({ error: `El pedido ya está en estado "${order.status}".` }, { status: 409 });
     }
 
-    await prisma.order.update({ where: { id: orderId }, data: { status: 'cancelled' } });
     return NextResponse.json({ message: 'Pedido cancelado.' });
   } catch (error) {
     console.error('Error al cancelar pedido:', error);

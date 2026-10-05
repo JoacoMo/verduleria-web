@@ -19,6 +19,9 @@ const STATUS_BY_MP_STATUS: Record<string, 'paid' | 'pending' | 'cancelled' | 'fa
   charged_back: 'cancelled',
 };
 
+// Margen por redondeo de centavos entre lo que calculamos y lo que cobra MP.
+const PAYMENT_AMOUNT_TOLERANCE = 1;
+
 export async function POST(request: Request) {
   const limited = enforceRateLimit(request, 'webhook');
   if (limited) return limited;
@@ -69,12 +72,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true });
     }
 
-    const nextStatus = STATUS_BY_MP_STATUS[payment.status] ?? 'pending';
-
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) {
       console.error('Webhook para un pedido inexistente:', orderId);
       return NextResponse.json({ received: true });
+    }
+
+    let nextStatus = STATUS_BY_MP_STATUS[payment.status] ?? 'pending';
+
+    // Un pago aprobado solo marca el pedido como pagado si el monto y la moneda
+    // coinciden con lo que se guardó al hacer el checkout. Es una segunda barrera
+    // por si alguna vez se arma un pago con el external_reference de otro pedido
+    // (por ejemplo, un link de pago viejo o uno creado a mano en el panel de MP).
+    if (nextStatus === 'paid') {
+      const paidAmount = Number(payment.transaction_amount);
+      const amountOk = Number.isFinite(paidAmount) && Math.abs(paidAmount - order.total) <= PAYMENT_AMOUNT_TOLERANCE;
+      if (!amountOk || payment.currency_id !== 'ARS') {
+        logSecurityEvent('pago_monto_distinto', {
+          ip: getClientIp(request),
+          path: '/api/webhooks/mercadopago',
+          method: 'POST',
+          subject: String(orderId),
+          reason: `pagado ${payment.transaction_amount} ${payment.currency_id}, esperado ${order.total} ARS`,
+        });
+        // Queda pendiente para que el dueño lo revise a mano en el panel.
+        nextStatus = 'pending';
+      }
     }
 
     // Un pedido ya confirmado a mano no se pisa con una notificación posterior.

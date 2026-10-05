@@ -1,6 +1,21 @@
 import { isProductUnit } from './product-units';
 import { isProductCategory, type ProductCategory } from './product-categories';
 import { sanitizeNumber, sanitizeText } from './sanitize';
+import { isReplacementPolicy, type ReplacementPolicy } from './order-options';
+
+/**
+ * Error de validación con un mensaje pensado para mostrarle al usuario.
+ *
+ * Se separa de un Error común para que los handlers sepan qué mensajes se pueden
+ * devolver tal cual: antes cualquier error (incluidos los de Prisma, que traen
+ * nombres de tablas y columnas) se mandaba al cliente como 400.
+ */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
 
 const MAX_NAME_LENGTH = 120;
 const MAX_IMAGE_URL_LENGTH = 2048;
@@ -47,11 +62,11 @@ function parseImageUrl(value: unknown) {
   try {
     parsed = new URL(image);
   } catch {
-    throw new Error('La imagen debe ser una URL válida o una ruta que empiece con "/".');
+    throw new ValidationError('La imagen debe ser una URL válida o una ruta que empiece con "/".');
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('La imagen solo puede ser una URL http o https.');
+    throw new ValidationError('La imagen solo puede ser una URL http o https.');
   }
 
   return parsed.toString();
@@ -67,7 +82,7 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
   if (!partial || body.name !== undefined) {
     const name = sanitizeText(body.name, { maxLength: MAX_NAME_LENGTH, singleLine: true });
     if (!name) {
-      throw new Error('El nombre del producto es obligatorio.');
+      throw new ValidationError('El nombre del producto es obligatorio.');
     }
     data.name = name;
   }
@@ -75,7 +90,7 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
   if (!partial || body.price !== undefined) {
     const price = sanitizeNumber(body.price, { min: 0, max: MAX_PRICE, decimals: 2 });
     if (price === null) {
-      throw new Error(`El precio debe ser un número entre 0 y ${MAX_PRICE}.`);
+      throw new ValidationError(`El precio debe ser un número entre 0 y ${MAX_PRICE}.`);
     }
     data.price = price;
   }
@@ -86,14 +101,14 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
 
   if (!partial || body.unit !== undefined) {
     if (!isProductUnit(body.unit)) {
-      throw new Error('La unidad debe ser kg, g o unidad.');
+      throw new ValidationError('La unidad debe ser kg, g o unidad.');
     }
     data.unit = body.unit;
   }
 
   if (!partial || body.category !== undefined) {
     if (!isProductCategory(body.category)) {
-      throw new Error('La categoría debe ser Frutas, Verduras, Almacén u Ofertas.');
+      throw new ValidationError('La categoría debe ser Frutas, Verduras, Almacén u Ofertas.');
     }
     data.category = body.category;
   }
@@ -105,9 +120,67 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
     } else if (typeof body.available === 'boolean') {
       data.available = body.available;
     } else {
-      throw new Error('La disponibilidad debe ser verdadero o falso.');
+      throw new ValidationError('La disponibilidad debe ser verdadero o falso.');
     }
   }
 
   return data;
+}
+const MAX_CUSTOMER_NAME_LENGTH = 80;
+const MAX_ADDRESS_LENGTH = 200;
+const MAX_NOTES_LENGTH = 500;
+
+export type CustomerPayload = {
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string | null;
+  notes: string | null;
+  replacementPolicy: ReplacementPolicy;
+};
+
+/**
+ * Teléfono argentino "razonable": se quedan solo los dígitos y se exige un largo
+ * de entre 8 y 15 (de un fijo local a un celular con +54 9). No se intenta
+ * validar la numeración real: alcanza con que el dueño pueda escribirle.
+ */
+function parsePhone(value: unknown) {
+  const raw = sanitizeText(value, { maxLength: 40, singleLine: true }) ?? '';
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) {
+    throw new ValidationError('Ingresá un teléfono válido (con código de área, sin el 15).');
+  }
+  return digits;
+}
+
+/**
+ * Datos de contacto y entrega que manda el checkout.
+ * La dirección es obligatoria solo si el pedido es con envío.
+ */
+export function parseCustomerPayload(payload: unknown, options: { isDelivery: boolean }): CustomerPayload {
+  const body = (payload ?? {}) as Record<string, unknown>;
+
+  const customerName = sanitizeText(body.customerName, { maxLength: MAX_CUSTOMER_NAME_LENGTH, singleLine: true });
+  if (!customerName || customerName.length < 2) {
+    throw new ValidationError('Ingresá tu nombre para saber de quién es el pedido.');
+  }
+
+  const customerPhone = parsePhone(body.customerPhone);
+
+  const address = sanitizeText(body.customerAddress, { maxLength: MAX_ADDRESS_LENGTH, singleLine: true }) || null;
+  if (options.isDelivery && (!address || address.length < 5)) {
+    throw new ValidationError('Para el envío necesitamos la dirección (calle, número y barrio).');
+  }
+
+  const notes = sanitizeText(body.notes, { maxLength: MAX_NOTES_LENGTH }) || null;
+
+  // Si no viene, se asume la opción más común (reemplazar por similar).
+  const replacementPolicy = isReplacementPolicy(body.replacementPolicy) ? body.replacementPolicy : 'replace';
+
+  return {
+    customerName,
+    customerPhone,
+    customerAddress: options.isDelivery ? address : null,
+    notes,
+    replacementPolicy,
+  };
 }

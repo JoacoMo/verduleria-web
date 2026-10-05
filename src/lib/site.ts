@@ -13,6 +13,9 @@ export const siteConfig = {
   contactEmail: 'gastaldo50@gmail.com',
   // Si queda vacío, el menú no muestra el botón de Instagram.
   instagramUrl: process.env.INSTAGRAM_URL || '',
+  // Link corto de Google para dejar reseña (Perfil de empresa > Pedir reseñas).
+  // Si queda vacío, no se muestra el pedido de reseña después de comprar.
+  googleReviewUrl: process.env.GOOGLE_REVIEW_URL || '',
   deliveryProviderName: process.env.DELIVERY_PROVIDER_NAME || 'Uber Moto',
   deliveryMaxWeightKg: Number(process.env.DELIVERY_MAX_WEIGHT_KG) || 7,
   deliveryMinPurchase: Number(process.env.DELIVERY_MIN_PURCHASE) || 10000,

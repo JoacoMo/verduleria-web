@@ -30,6 +30,10 @@ export type OrderRecord = {
   deliveryMethod: DeliveryMethod;
   customerName: string | null;
   customerPhone: string | null;
+  customerAddress: string | null;
+  notes: string | null;
+  replacementPolicy: string | null;
+  mpPaymentId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -49,6 +53,8 @@ export type StoreInfo = {
   deliveryMinPurchase: number;
   deliveryFreeThreshold: number;
   instagramUrl: string;
+  contactEmail: string;
+  googleReviewUrl: string;
   mercadoPagoEnabled?: boolean;
 };
 

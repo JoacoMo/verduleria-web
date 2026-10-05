@@ -5,7 +5,8 @@ import { getCachedProducts } from '@/lib/products';
 import type { Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, isProductUnit } from '@/lib/product-units';
 import { formatArs } from '@/lib/format-price';
-import { isProductCategory } from '@/lib/product-categories';
+import { isMercadoPagoEnabled } from '@/lib/mercadopago';
+import { ORDER_CUTOFF_LABEL } from '@/lib/store-hours';
 
 // La página se renderiza en el servidor en cada visita (no es estática) porque la
 // CSP con nonce necesita un valor distinto por request, y el nonce se lee de las
@@ -74,8 +75,23 @@ const FAQ_ENTRIES = [
   },
   {
     question: '¿Cómo se paga?',
+    answer: isMercadoPagoEnabled()
+      ? 'El pedido se hace desde la web y se paga por transferencia bancaria (nos mandás el comprobante por WhatsApp) o con tarjeta, débito o dinero en cuenta por Mercado Pago.'
+      : 'El pedido se hace desde la web y se abona por transferencia bancaria. Después nos mandás el comprobante por WhatsApp y preparamos la compra.',
+  },
+  {
+    question: '¿El precio final puede cambiar?',
     answer:
-      'El pedido se hace desde la web y se abona por transferencia bancaria. Después nos mandás el comprobante por WhatsApp y preparamos la compra.',
+      'En los productos por peso el total es aproximado: al pesar puede haber una diferencia chica (unos gramos de más o de menos). Si la diferencia es importante te avisamos por WhatsApp antes de cerrar el pedido.',
+  },
+  {
+    question: '¿Qué pasa si falta algún producto?',
+    answer:
+      'Al hacer el pedido elegís qué preferís: que lo reemplacemos por uno similar, que lo saquemos del pedido o que te escribamos antes de decidir.',
+  },
+  {
+    question: '¿Hasta qué hora puedo pedir?',
+    answer: `Los pedidos que llegan antes de las ${ORDER_CUTOFF_LABEL} se preparan en el día. Los que llegan después se preparan a partir del día siguiente.`,
   },
   {
     question: '¿Se puede comprar por gramo o hay que llevar por kilo?',
@@ -92,6 +108,18 @@ async function getProducts(): Promise<Product[]> {
     console.error('Error al cargar productos para el render del servidor:', error);
     return [];
   }
+}
+
+/**
+ * JSON.stringify no escapa `<`: un producto llamado `</script><script>...` cerraba
+ * el bloque de datos y lo que seguía se interpretaba como HTML. La CSP con nonce
+ * igual bloquearía el script, pero no hay por qué depender solo de eso.
+ */
+function serializeJsonLd(data: unknown) {
+  return JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
 }
 
 function buildStructuredData(products: Product[]) {
@@ -200,7 +228,7 @@ export default async function Page() {
       */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(structuredData) }}
       />
       <StorefrontPage initialProducts={products} infoSection={<InfoSection />} />
     </>

@@ -437,6 +437,7 @@ npm run start     # sirve la build de producción
 | `DELIVERY_FREE_THRESHOLD` | No | Monto desde el que el envío es gratis (por defecto 20000). |
 | `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` | No | Activan Mercado Pago. Sin ellas, solo transferencia. |
 | `INSTAGRAM_URL` | No | Si está vacía, el menú no muestra Instagram. |
+| `GOOGLE_REVIEW_URL` | No | Link corto para dejar reseña en Google. Si está vacía, no se pide la reseña después de comprar. |
 
 Ninguna variable usa el prefijo `NEXT_PUBLIC_`: todos los valores se leen en el
 servidor y ningún secreto llega al bundle del navegador. El archivo `.env` está excluido

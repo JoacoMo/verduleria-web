@@ -31,6 +31,9 @@ export const PRODUCT_MAX_CART_QUANTITY: Record<ProductUnit, number> = {
   unidad: 200,
 };
 
+/** Precisión mínima para cantidades en kilos (50 g). */
+const KG_PRECISION = 0.05;
+
 export function isProductUnit(value: unknown): value is ProductUnit {
   return typeof value === 'string' && PRODUCT_UNITS.includes(value as ProductUnit);
 }
@@ -58,6 +61,10 @@ export function normalizeProductQuantity(quantity: number, unit: ProductUnit) {
     return Math.max(step, Math.round(quantity / step) * step);
   }
 
-  const rounded = Math.round(quantity / step) * step;
-  return Number(rounded.toFixed(2));
+  // Lo que va por kilo NO se redondea al paso del botón (250 g): en el carrito
+  // se puede pasar a gramos y pedir 300 g o 100 g. Antes el servidor lo llevaba a
+  // 250 g y 0 g respectivamente (y una línea de 0 se descartaba del pedido).
+  // Se redondea a 50 g, que es la precisión real de una balanza de verdulería.
+  const rounded = Math.round(quantity / KG_PRECISION) * KG_PRECISION;
+  return Math.max(KG_PRECISION, Number(rounded.toFixed(2)));
 }

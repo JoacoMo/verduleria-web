@@ -15,6 +15,7 @@ export type SecurityEvent =
   | 'rate_limit'
   | 'token_invalido'
   | 'webhook_firma_invalida'
+  | 'pago_monto_distinto'
   | 'validacion_rechazada'
   | 'origen_bloqueado'
   | 'upload_rechazado'

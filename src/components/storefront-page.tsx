@@ -8,11 +8,79 @@ import type { ProductUnit } from '@/lib/product-units';
 import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
 import { formatArs } from '@/lib/format-price';
-import { isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
+import { ORDER_CUTOFF_LABEL, isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
 import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
+import { REPLACEMENT_POLICIES, REPLACEMENT_POLICY_LABELS, type ReplacementPolicy } from '@/lib/order-options';
 
 type CartItem = Product & { quantity: number };
 type CategoryFilter = ProductCategory | 'Todas';
+/** Lo mínimo que se guarda del carrito: el precio siempre sale del catálogo vigente. */
+type StoredCartLine = { id: number; quantity: number };
+
+type CustomerForm = {
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  notes: string;
+  replacementPolicy: ReplacementPolicy;
+};
+
+const EMPTY_CUSTOMER: CustomerForm = {
+  customerName: '',
+  customerPhone: '',
+  customerAddress: '',
+  notes: '',
+  replacementPolicy: 'replace',
+};
+
+// Claves de localStorage. El carrito sobrevive a cerrar la pestaña (en el celular
+// pasa todo el tiempo) y los datos de contacto se recuerdan para el próximo pedido.
+const STORAGE_KEYS = {
+  cart: 'elpampa:carrito',
+  lastOrder: 'elpampa:ultimo-pedido',
+  customer: 'elpampa:cliente',
+} as const;
+
+function readStorage<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    // Modo incógnito, storage lleno o JSON viejo roto: se arranca de cero.
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Sin storage la tienda funciona igual, solo no recuerda el carrito.
+  }
+}
+
+function toStoredLines(value: unknown): StoredCartLine[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((line) => ({ id: Number(line?.id), quantity: Number(line?.quantity) }))
+    .filter((line) => Number.isInteger(line.id) && line.id > 0 && Number.isFinite(line.quantity) && line.quantity > 0);
+}
+
+/** Arma las líneas del carrito a partir del catálogo; descarta lo que ya no existe. */
+function linesToCart(lines: StoredCartLine[], products: Product[]): CartItem[] {
+  return lines.flatMap((line) => {
+    const product = products.find((item) => item.id === line.id);
+    if (!product) return [];
+    return [{ ...product, quantity: normalizeProductQuantity(line.quantity, product.unit) }];
+  });
+}
+
+/** Cantidad en kilos de una línea, para estimar el peso del envío. */
+function lineWeightKg(item: { unit: ProductUnit; quantity: number }) {
+  if (item.unit === 'kg') return item.quantity;
+  if (item.unit === 'g') return item.quantity / 1000;
+  return 0;
+}
 
 const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 const INITIAL_VISIBLE_PRODUCTS = 8;
@@ -34,6 +102,8 @@ const DEFAULT_STORE_INFO: StoreInfo = {
   deliveryMinPurchase: 10000,
   deliveryFreeThreshold: 20000,
   instagramUrl: '',
+  contactEmail: 'gastaldo50@gmail.com',
+  googleReviewUrl: '',
 };
 
 type StorefrontPageProps = {
@@ -67,6 +137,60 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>('Todas');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [storeStatus, setStoreStatus] = useState<{ open: boolean; pastCutoff: boolean } | null>(null);
+  // El checkout tiene dos pasos dentro del mismo panel: revisar el carrito y
+  // completar los datos de contacto/entrega.
+  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'details'>('cart');
+  const [customer, setCustomer] = useState<CustomerForm>(EMPTY_CUSTOMER);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [lastOrderLines, setLastOrderLines] = useState<StoredCartLine[]>([]);
+  // Hasta no leer localStorage no se escribe, para no pisar el carrito guardado
+  // con el carrito vacío del primer render.
+  const [storageLoaded, setStorageLoaded] = useState(false);
+
+  useEffect(() => {
+    const storedCart = toStoredLines(readStorage(STORAGE_KEYS.cart));
+    if (storedCart.length > 0) {
+      setCart(linesToCart(storedCart, initialProducts));
+    }
+    setLastOrderLines(toStoredLines(readStorage(STORAGE_KEYS.lastOrder)));
+    const storedCustomer = readStorage<Partial<CustomerForm>>(STORAGE_KEYS.customer);
+    if (storedCustomer && typeof storedCustomer === 'object') {
+      setCustomer((current) => ({
+        ...current,
+        customerName: typeof storedCustomer.customerName === 'string' ? storedCustomer.customerName : '',
+        customerPhone: typeof storedCustomer.customerPhone === 'string' ? storedCustomer.customerPhone : '',
+        customerAddress: typeof storedCustomer.customerAddress === 'string' ? storedCustomer.customerAddress : '',
+      }));
+    }
+    setStorageLoaded(true);
+    // Solo al montar: initialProducts es el catálogo que vino del servidor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!storageLoaded) return;
+    writeStorage(STORAGE_KEYS.cart, cart.map(({ id, quantity }) => ({ id, quantity })));
+  }, [cart, storageLoaded]);
+
+  // Si el carrito cambia, es otra compra: la clave de idempotencia anterior ya no
+  // corresponde (si no, un reintento devolvería el pedido viejo con otros ítems).
+  useEffect(() => {
+    checkoutKeyRef.current = null;
+  }, [cart, isDelivery]);
+
+  // El aviso de "falta tal dato" se va apenas el cliente empieza a corregir.
+  useEffect(() => {
+    setFormError(null);
+  }, [customer, isDelivery]);
+
+  // Cuando llega el catálogo fresco, el carrito toma precio, nombre y stock
+  // vigentes. Lo que se borró del catálogo se saca.
+  useEffect(() => {
+    setCart((currentCart) => {
+      if (currentCart.length === 0) return currentCart;
+      return linesToCart(currentCart.map(({ id, quantity }) => ({ id, quantity })), products);
+    });
+  }, [products]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -82,7 +206,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
     const interval = setInterval(updateStoreStatus, 60_000);
     return () => clearInterval(interval);
   }, []);
-  const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
+  const totalWeight = useMemo(() => cart.reduce((sum, item) => sum + lineWeightKg(item), 0), [cart]);
 
   useEffect(() => {
     if (!isCartOpen) return;
@@ -166,6 +290,9 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
   const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
   const hasFreeShipping = cartTotal >= storeInfo.deliveryFreeThreshold;
   const missingForFreeShipping = Math.max(0, storeInfo.deliveryFreeThreshold - cartTotal);
+  const unavailableInCart = cart.filter((item) => !item.available);
+  const hasWeighedItems = cart.some((item) => item.unit !== 'unidad');
+  const whatsappDisplay = storeInfo.whatsappNumber.replace(/^549/, '');
 
   function addToCart(productId: number, quantityToAdd?: number) {
     const product = products.find((item) => item.id === productId);
@@ -262,34 +389,79 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
     return products.filter((product) => !cartIds.has(product.id) && product.available).slice(0, 4);
   }, [products, cart]);
 
-  function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
-    const lines = items.map((item) => {
-      const quantityText = item.unit === 'unidad' ? `${item.quantity}x` : `${item.quantity}${item.unit}x`;
-      return `- ${quantityText} ${item.name}: $${(item.price * item.quantity).toFixed(2)}`;
-    }).join('\n');
+  function buildWhatsappMessage(params: {
+    items: OrderItem[];
+    orderId: number;
+    total: number;
+    isDelivery: boolean;
+    isCardPayment: boolean;
+    customer: CustomerForm;
+  }) {
+    const { items, orderId, total, isDelivery, isCardPayment, customer } = params;
+    const lines = items.map((item) => (
+      `- ${formatProductQuantity(item.quantity, item.unit)} ${item.name}: ${formatArs(item.price * item.quantity)}`
+    )).join('\n');
 
+    const weight = items.reduce((sum, item) => sum + lineWeightKg(item), 0);
     const maxWeight = storeInfo.deliveryMaxWeightKg;
     const deliveryText = isDelivery
-      ? `Quiero que me lo envíen por ${storeInfo.deliveryProviderName}.`
-      : 'Quiero retirarlo en el local.';
-    const deliveryWarning = isDelivery && totalWeight > maxWeight
+      ? `Envío por ${storeInfo.deliveryProviderName} a ${customer.customerAddress.trim()}.`
+      : 'Retiro en el local.';
+    const deliveryWarning = isDelivery && weight > maxWeight
       ? `\n⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
       : '';
     const freeShippingNote = isDelivery && total >= storeInfo.deliveryFreeThreshold
       ? `\n🚚 El pedido supera los ${formatArs(storeInfo.deliveryFreeThreshold)}, así que el envío es gratis.`
       : '';
+    const notes = customer.notes.trim() ? `\nAclaraciones: ${customer.notes.trim()}` : '';
+    const closing = isCardPayment
+      ? 'Lo pagué con Mercado Pago.'
+      : '¡Te envío el comprobante de la transferencia!';
 
     const text =
-      `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.\n\n` +
+      `Hola! Soy ${customer.customerName.trim()} y quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.\n\n` +
       `${lines}\n\n` +
-      `Total: $${total.toFixed(2)}\n\n` +
-      `Entrega: ${deliveryText}${deliveryWarning}${freeShippingNote}\n\n` +
-      '¡Te envío el comprobante de la transferencia!';
+      `Total: ${formatArs(total)}\n\n` +
+      `Entrega: ${deliveryText}${deliveryWarning}${freeShippingNote}\n` +
+      `Si falta algo: ${REPLACEMENT_POLICY_LABELS[customer.replacementPolicy]}.${notes}\n\n` +
+      closing;
     return `https://wa.me/${storeInfo.whatsappNumber}?text=${encodeURIComponent(text)}`;
+  }
+
+  /** Validación rápida en el navegador; el servidor vuelve a validar todo. */
+  function validateCustomerForm() {
+    if (customer.customerName.trim().length < 2) return 'Ingresá tu nombre.';
+    const phoneDigits = customer.customerPhone.replace(/\D/g, '');
+    if (phoneDigits.length < 8 || phoneDigits.length > 15) return 'Ingresá un teléfono válido, con código de área.';
+    if (isDelivery && customer.customerAddress.trim().length < 5) return 'Para el envío necesitamos la dirección.';
+    return null;
+  }
+
+  function repeatLastOrder() {
+    const lines = linesToCart(lastOrderLines, products).filter((item) => item.available);
+    if (lines.length === 0) {
+      setToastMessage('Los productos de tu último pedido no están disponibles hoy');
+      return;
+    }
+    setCart(lines);
+    setCheckoutStep('cart');
+    setIsCartOpen(true);
+    const missing = lastOrderLines.length - lines.length;
+    setToastMessage(missing > 0
+      ? `Cargamos tu último pedido (${missing} producto${missing === 1 ? '' : 's'} sin stock hoy)`
+      : 'Cargamos tu último pedido');
   }
 
   async function handleCheckout() {
     if (cart.length === 0) return;
+    if (unavailableInCart.length > 0) return;
+
+    const validationMessage = validateCustomerForm();
+    if (validationMessage) {
+      setFormError(validationMessage);
+      return;
+    }
+    setFormError(null);
     // Primera barrera contra el doble toque: mientras hay un pedido en curso no
     // se dispara otro. La segunda barrera (la que realmente garantiza que no se
     // dupliquen) es la clave de idempotencia que valida el servidor.
@@ -320,13 +492,14 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
           isDelivery,
           paymentMethod,
           idempotencyKey: checkoutKeyRef.current,
+          customer,
         }),
       });
 
       const result = await response.json();
       if (!response.ok) {
         waTab?.close();
-        alert(result.error || 'Hubo un problema al procesar el pedido.');
+        setFormError(result.error || 'Hubo un problema al procesar el pedido.');
         return;
       }
 
@@ -334,19 +507,44 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
       // necesita una clave nueva.
       checkoutKeyRef.current = null;
 
+      // Ítems como los calculó el servidor (precio vigente). Si por algún motivo
+      // no vienen (respuesta vieja), se usa el carrito.
+      const items: OrderItem[] = Array.isArray(result.items) && result.items.length > 0
+        ? result.items
+        : cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
+
+      // Para "repetir último pedido" y para no volver a tipear los datos.
+      const orderLines = items.map(({ id, quantity }) => ({ id, quantity }));
+      writeStorage(STORAGE_KEYS.lastOrder, orderLines);
+      setLastOrderLines(orderLines);
+      writeStorage(STORAGE_KEYS.customer, {
+        customerName: customer.customerName,
+        customerPhone: customer.customerPhone,
+        customerAddress: customer.customerAddress,
+      });
+      setCustomer((current) => ({ ...current, notes: '' }));
+
       // Pago con tarjeta: el cliente sigue en Mercado Pago y vuelve por back_urls.
       if (isCardPayment) {
         if (result.checkoutUrl) {
           setCart([]);
+          setCheckoutStep('cart');
           window.location.href = result.checkoutUrl;
           return;
         }
         alert('No pudimos generar el link de pago. Podés pagar por transferencia.');
       }
 
-      const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
-      const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
-      setOrderConfirmation({ ...result, items, whatsappUrl: waLink });
+      const waLink = buildWhatsappMessage({
+        items,
+        orderId: result.orderId,
+        total: result.total,
+        isDelivery,
+        isCardPayment: false,
+        customer,
+      });
+      setOrderConfirmation({ ...storeInfo, ...result, items, whatsappUrl: waLink });
+      setCheckoutStep('cart');
 
       if (waTab) {
         waTab.location.href = waLink;
@@ -449,8 +647,27 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
       </header>
 
       <main className="container">
+        {/* Las "reglas del juego" a la vista antes de armar el carrito: es lo primero
+            que muestran las verdulerías online que mejor venden en Córdoba. */}
+        <ul className="store-rules" aria-label="Condiciones de compra">
+          <li><i className="fa-solid fa-store" /> <span><strong>Retiro gratis</strong> en el local</span></li>
+          <li><i className="fa-solid fa-motorcycle" /> <span>Envío con pedido mínimo de <strong>{formatArs(storeInfo.deliveryMinPurchase)}</strong></span></li>
+          <li><i className="fa-solid fa-truck-fast" /> <span><strong>Envío gratis</strong> desde {formatArs(storeInfo.deliveryFreeThreshold)}</span></li>
+          <li><i className="fa-solid fa-clock" /> <span>Pedidos hasta las <strong>{ORDER_CUTOFF_LABEL}</strong> salen en el día</span></li>
+          <li>
+            <i className="fa-solid fa-wallet" />{' '}
+            <span>Pagás por <strong>transferencia</strong>{storeInfo.mercadoPagoEnabled ? <> o <strong>Mercado Pago</strong></> : null}</span>
+          </li>
+        </ul>
+
         <h2 id="productos"><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
         <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
+
+        {lastOrderLines.length > 0 && cart.length === 0 ? (
+          <button type="button" className="repeat-order-btn" onClick={repeatLastOrder}>
+            <i className="fa-solid fa-rotate-right" /> Repetir mi último pedido
+          </button>
+        ) : null}
 
         <div className="search-bar">
           <i className="fa-solid fa-magnifying-glass" />
@@ -491,7 +708,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                 <div className={`product-card ${product.available ? '' : 'product-card-unavailable'}`} key={product.id}>
                   <div className="product-card-image">
                     <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                    <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
+                    <span className="price-tag">{formatArs(product.price)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
                     {product.available ? null : <span className="unavailable-overlay">Sin stock</span>}
                   </div>
                   <div className="product-info">
@@ -558,15 +775,15 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
               <i className="fa-solid fa-location-dot" />{' '}
               <a href={MAP_DIRECTIONS_URL} target="_blank" rel="noopener noreferrer">{storeInfo.storeAddress}</a>
             </p>
-            <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
-            <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
+            <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: {whatsappDisplay}</a></p>
+            <p><i className="fa-solid fa-envelope" /> <a href={`mailto:${storeInfo.contactEmail}`}>{storeInfo.contactEmail}</a></p>
             <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
             <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
             <p className="order-cutoff-note">
               <i className="fa-solid fa-triangle-exclamation" />{' '}
               {storeStatus?.pastCutoff
-                ? 'Ya pasaron las 19:00, así que los pedidos de hoy se toman en cuenta recién mañana.'
-                : 'Los pedidos hechos después de las 19:00 se toman en cuenta a partir del día siguiente.'}
+                ? `Ya pasaron las ${ORDER_CUTOFF_LABEL}, así que los pedidos de hoy se toman en cuenta recién mañana.`
+                : `Los pedidos hechos después de las ${ORDER_CUTOFF_LABEL} se toman en cuenta a partir del día siguiente.`}
             </p>
           </div>
 
@@ -598,7 +815,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
             <div className="cart-drawer-body">
               <div className="order-confirmation">
                 <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
-                <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
+                <p>Transferí <strong>{formatArs(orderConfirmation.total)}</strong> a:</p>
                 <ul className="transfer-details">
                   <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
                   {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
@@ -607,6 +824,13 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                 <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
                   <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
                 </a>
+                {storeInfo.googleReviewUrl ? (
+                  <p className="review-ask">
+                    ¿Te gustó cómo te atendimos?{' '}
+                    <a href={storeInfo.googleReviewUrl} target="_blank" rel="noopener noreferrer">Dejanos una reseña en Google</a>
+                    {' '}— nos ayuda un montón a que nos encuentren otros vecinos.
+                  </p>
+                ) : null}
                 <button type="button" className="continue-shopping-btn" onClick={() => { setOrderConfirmation(null); setIsCartOpen(false); }}>
                   ¿Querés hacer otro pedido? Seguir comprando
                 </button>
@@ -615,8 +839,92 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
           ) : (
           <>
           <div className="cart-drawer-body">
-            {cart.length === 0 ? (
-              <p>Tu carrito está vacío.</p>
+            {checkoutStep === 'details' && cart.length > 0 ? (
+              <form
+                className="checkout-form"
+                id="checkout-form"
+                onSubmit={(event) => { event.preventDefault(); void handleCheckout(); }}
+                noValidate
+              >
+                <button type="button" className="checkout-back-btn" onClick={() => { setCheckoutStep('cart'); setFormError(null); }}>
+                  <i className="fa-solid fa-arrow-left" /> Volver al carrito
+                </button>
+                <h3>Tus datos</h3>
+                <p className="checkout-form-hint">Los usamos solo para coordinar este pedido.</p>
+                <div className="form-group">
+                  <label htmlFor="checkout-name">Nombre</label>
+                  <input
+                    id="checkout-name"
+                    type="text"
+                    autoComplete="name"
+                    maxLength={80}
+                    required
+                    value={customer.customerName}
+                    onChange={(event) => setCustomer((current) => ({ ...current, customerName: event.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="checkout-phone">Teléfono / WhatsApp</label>
+                  <input
+                    id="checkout-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="351 1234567"
+                    maxLength={40}
+                    required
+                    value={customer.customerPhone}
+                    onChange={(event) => setCustomer((current) => ({ ...current, customerPhone: event.target.value }))}
+                  />
+                </div>
+                {isDelivery ? (
+                  <div className="form-group">
+                    <label htmlFor="checkout-address">Dirección de entrega</label>
+                    <input
+                      id="checkout-address"
+                      type="text"
+                      autoComplete="street-address"
+                      placeholder="Calle, número, depto y barrio"
+                      maxLength={200}
+                      required
+                      value={customer.customerAddress}
+                      onChange={(event) => setCustomer((current) => ({ ...current, customerAddress: event.target.value }))}
+                    />
+                  </div>
+                ) : null}
+                <div className="form-group">
+                  <label htmlFor="checkout-replacement">Si algo falta o no está lindo</label>
+                  <select
+                    id="checkout-replacement"
+                    value={customer.replacementPolicy}
+                    onChange={(event) => setCustomer((current) => ({ ...current, replacementPolicy: event.target.value as ReplacementPolicy }))}
+                  >
+                    {REPLACEMENT_POLICIES.map((policy) => (
+                      <option key={policy} value={policy}>{REPLACEMENT_POLICY_LABELS[policy]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="checkout-notes">Aclaraciones (opcional)</label>
+                  <textarea
+                    id="checkout-notes"
+                    rows={3}
+                    maxLength={500}
+                    placeholder="Ej: tomates para ensalada, no muy maduros. Timbre 2B."
+                    value={customer.notes}
+                    onChange={(event) => setCustomer((current) => ({ ...current, notes: event.target.value }))}
+                  />
+                </div>
+              </form>
+            ) : cart.length === 0 ? (
+              <>
+                <p>Tu carrito está vacío.</p>
+                {lastOrderLines.length > 0 ? (
+                  <button type="button" className="repeat-order-btn" onClick={repeatLastOrder}>
+                    <i className="fa-solid fa-rotate-right" /> Repetir mi último pedido
+                  </button>
+                ) : null}
+              </>
             ) : (
               cart.map((item) => {
                 const displayUnit = item.unit === 'unidad' ? 'unidad' : (unitModes[item.id] ?? item.unit);
@@ -632,7 +940,8 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                       <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                       <div>
                         <strong>{item.name}</strong>
-                        <p>${item.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[item.unit]} — ${(item.price * item.quantity).toFixed(2)}</p>
+                        <p>{formatArs(item.price)} / {PRODUCT_UNIT_LABELS[item.unit]} — {formatArs(item.price * item.quantity)}</p>
+                        {item.available ? null : <p className="cart-item-unavailable">Se quedó sin stock: sacalo para seguir.</p>}
                       </div>
                     </div>
 
@@ -660,7 +969,13 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
               })
             )}
 
-            {relatedProducts.length > 0 ? (
+            {checkoutStep === 'cart' && hasWeighedItems ? (
+              <p className="weight-disclaimer">
+                <i className="fa-solid fa-scale-balanced" /> En lo que va por peso el total es aproximado: al pesar puede variar unos gramos.
+              </p>
+            ) : null}
+
+            {checkoutStep === 'cart' && relatedProducts.length > 0 ? (
               <div className="related-products">
                 <h3>También te puede interesar</h3>
                 <div className="related-products-list">
@@ -669,7 +984,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                       <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
                       <div>
                         <strong>{product.name}</strong>
-                        <p>${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</p>
+                        <p>{formatArs(product.price)} / {PRODUCT_UNIT_LABELS[product.unit]}</p>
                       </div>
                       <button type="button" onClick={() => addToCart(product.id)}>+ Agregar</button>
                     </div>
@@ -707,7 +1022,19 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                 </div>
               )
             ) : null}
-            {storeInfo.mercadoPagoEnabled ? (
+            {isDelivery && totalWeight > storeInfo.deliveryMaxWeightKg ? (
+              <div className="delivery-notice">
+                <i className="fa-solid fa-weight-hanging" />
+                <span>Tu pedido pesa unos {totalWeight.toFixed(1)} kg. Para {storeInfo.deliveryProviderName} el máximo suele ser {storeInfo.deliveryMaxWeightKg} kg: puede que haya que dividirlo en dos viajes.</span>
+              </div>
+            ) : null}
+            {unavailableInCart.length > 0 ? (
+              <div className="delivery-notice delivery-notice-warning">
+                <i className="fa-solid fa-circle-exclamation" />
+                <span>Sin stock: {unavailableInCart.map((item) => item.name).join(', ')}. Sacalos del carrito para seguir.</span>
+              </div>
+            ) : null}
+            {checkoutStep === 'details' && storeInfo.mercadoPagoEnabled ? (
               <div className="payment-toggle">
                 <button type="button" className={paymentMethod === 'transfer' ? 'active' : ''} onClick={() => setPaymentMethod('transfer')}>
                   <i className="fa-solid fa-building-columns" /> Transferencia
@@ -717,16 +1044,34 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
                 </button>
               </div>
             ) : null}
-            <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button
-              className="checkout-btn"
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || belowDeliveryMinimum || isCheckoutLoading}
-            >
-              {isCheckoutLoading
-                ? 'Procesando...'
-                : paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
-            </button>
+            {formError ? (
+              <div className="delivery-notice delivery-notice-warning" role="alert">
+                <i className="fa-solid fa-circle-exclamation" />
+                <span>{formError}</span>
+              </div>
+            ) : null}
+            <div className="cart-total">Total{hasWeighedItems ? ' aprox.' : ''}: <span>{formatArs(cartTotal)}</span></div>
+            {checkoutStep === 'cart' ? (
+              <button
+                type="button"
+                className="checkout-btn"
+                onClick={() => setCheckoutStep('details')}
+                disabled={cart.length === 0 || belowDeliveryMinimum || unavailableInCart.length > 0}
+              >
+                Continuar
+              </button>
+            ) : (
+              <button
+                type="submit"
+                form="checkout-form"
+                className="checkout-btn"
+                disabled={cart.length === 0 || belowDeliveryMinimum || unavailableInCart.length > 0 || isCheckoutLoading}
+              >
+                {isCheckoutLoading
+                  ? 'Procesando...'
+                  : paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
+              </button>
+            )}
           </div>
           </>
           )}
@@ -739,7 +1084,7 @@ export default function StorefrontPage({ initialProducts = [], infoSection }: St
           <>
             <span className="cart-fab-summary">
               <span className="cart-fab-count-text">{cartCount} {cartCount === 1 ? 'producto' : 'productos'}</span>
-              <span className="cart-fab-total">${cartTotal.toFixed(2)}</span>
+              <span className="cart-fab-total">{formatArs(cartTotal)}</span>
             </span>
             <i className="fa-solid fa-chevron-up cart-fab-chevron" />
           </>

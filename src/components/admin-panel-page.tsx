@@ -8,6 +8,8 @@ import type { OrderRecord, Product } from '@/lib/types';
 import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
 import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
+import { ORDER_STATUS_LABELS, REPLACEMENT_POLICY_LABELS, isReplacementPolicy } from '@/lib/order-options';
+import { formatArs } from '@/lib/format-price';
 
 const INITIAL_VISIBLE_PRODUCTS = 5;
 
@@ -17,6 +19,16 @@ const DELIVERY_METHOD_LABELS: Record<OrderRecord['deliveryMethod'], string> = {
   pickup: 'Retiro en el local',
   delivery: 'Envío a domicilio',
 };
+
+/**
+ * Link de WhatsApp al cliente. Se guarda solo con dígitos; si no trae el 54 del
+ * país se asume celular argentino (549 + número sin el 0 inicial).
+ */
+function customerWhatsappUrl(phone: string) {
+  const digits = phone.replace(/\D/g, '');
+  const international = digits.startsWith('54') ? digits : `549${digits.replace(/^0/, '')}`;
+  return `https://wa.me/${international}`;
+}
 
 function getArgentinaToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Cordoba' }).format(new Date());
@@ -315,7 +327,7 @@ export default function AdminPanelPage() {
   }
 
   async function handleConfirmOrder(orderId: number) {
-    if (!confirm('¿Confirmás que llegó la transferencia de este pedido? Se va a descontar el stock.')) return;
+    if (!confirm('¿Confirmás que llegó el pago de este pedido?')) return;
 
     try {
       const response = await fetch(`${ADMIN_API}/orders/${orderId}/confirm`, {
@@ -347,6 +359,10 @@ export default function AdminPanelPage() {
       });
 
       if (await handleAuthError(response)) return;
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        alert(result.error || 'No se pudo cancelar el pedido.');
+      }
       await refreshData();
     } catch (error) {
       console.error('Error al cancelar pedido:', error);
@@ -391,6 +407,18 @@ export default function AdminPanelPage() {
     }
     return sorted;
   }, [products, productSearch, productSort]);
+
+  // Resumen del día para el dueño: cuánto entró y cuánto falta cobrar.
+  const ordersSummary = useMemo(() => {
+    const paid = orders.filter((order) => order.status === 'paid');
+    const pending = orders.filter((order) => order.status === 'pending' || order.status === 'failed');
+    return {
+      paidCount: paid.length,
+      paidTotal: paid.reduce((sum, order) => sum + order.total, 0),
+      pendingCount: pending.length,
+      pendingTotal: pending.reduce((sum, order) => sum + order.total, 0),
+    };
+  }, [orders]);
 
   const isSearchingProducts = productSearch.trim().length > 0;
   const visibleProducts = isSearchingProducts || showAllProducts
@@ -507,7 +535,7 @@ export default function AdminPanelPage() {
                     <strong>{product.name}</strong> <span className="category-tag">{product.category}</span>
                     {product.available ? null : <span className="sin-stock-tag">Sin stock</span>}
                     <br />
-                    ${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}
+                    {formatArs(product.price)} / {PRODUCT_UNIT_LABELS[product.unit]}
                   </div>
                 </div>
                 <div className="product-item-actions">
@@ -542,7 +570,7 @@ export default function AdminPanelPage() {
         <hr />
 
         <h2>Pedidos</h2>
-        <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. El sistema ya no descuenta stock porque los productos se venden por unidad de medida.</p>
+        <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. Los pagos con Mercado Pago se marcan solos.</p>
 
         <div className="order-date-nav">
           <button type="button" onClick={() => goToDate(shiftDateParam(selectedDate, -1))}>◀ Día anterior</button>
@@ -555,26 +583,56 @@ export default function AdminPanelPage() {
           <button type="button" disabled={selectedDate >= getArgentinaToday()} onClick={() => goToDate(shiftDateParam(selectedDate, 1))}>Día siguiente ▶</button>
         </div>
 
+        {orders.length > 0 ? (
+          <div className="orders-summary">
+            <div>Cobrado<strong>{formatArs(ordersSummary.paidTotal)}</strong>{ordersSummary.paidCount} pedido(s)</div>
+            <div>Por cobrar<strong>{formatArs(ordersSummary.pendingTotal)}</strong>{ordersSummary.pendingCount} pedido(s)</div>
+          </div>
+        ) : null}
+
         <div>
           {orders.length === 0 ? <p>No hay pedidos para el {selectedDate}.</p> : null}
           {orders.map((order) => {
             const itemsHtml = order.items.map((item) => (
-              <li key={`${order.id}-${item.id}`}>{formatProductQuantity(item.quantity, item.unit)} de {item.name} — ${(item.price * item.quantity).toFixed(2)}</li>
+              <li key={`${order.id}-${item.id}`}>{formatProductQuantity(item.quantity, item.unit)} de {item.name} — {formatArs(item.price * item.quantity)}</li>
             ));
-            const statusClass = order.status === 'paid' ? 'paid' : order.status === 'pending' ? 'pending' : 'cancelled';
+            const statusClass = order.status === 'paid' ? 'paid' : order.status === 'pending' ? 'pending' : order.status === 'failed' ? 'failed' : 'cancelled';
+            const canResolve = order.status === 'pending' || order.status === 'failed';
+            const createdAt = order.createdAt
+              ? new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/Cordoba', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(order.createdAt))
+              : null;
 
             return (
               <div className="order-item" key={order.id}>
                 <div style={{ width: '100%' }}>
                   <div className="order-header">
-                    <strong>Pedido #{order.id}</strong>
-                    <span className={`order-status ${statusClass}`}>{order.status}</span>
+                    <strong>Pedido #{order.id}{createdAt ? ` · ${createdAt} h` : ''}</strong>
+                    <span className={`order-status ${statusClass}`}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
                   </div>
+                  {order.customerName || order.customerPhone ? (
+                    <div className="order-customer">
+                      {order.customerName ? <p><strong>{order.customerName}</strong></p> : null}
+                      {order.customerPhone ? (
+                        <p>
+                          <i className="fa-brands fa-whatsapp" />{' '}
+                          <a href={customerWhatsappUrl(order.customerPhone)} target="_blank" rel="noopener noreferrer">{order.customerPhone}</a>
+                        </p>
+                      ) : null}
+                      {order.customerAddress ? <p><i className="fa-solid fa-location-dot" /> {order.customerAddress}</p> : null}
+                      {order.replacementPolicy && isReplacementPolicy(order.replacementPolicy) ? (
+                        <p>Si falta algo: {REPLACEMENT_POLICY_LABELS[order.replacementPolicy]}</p>
+                      ) : null}
+                      {order.notes ? <p>Aclaraciones: {order.notes}</p> : null}
+                    </div>
+                  ) : null}
                   <ul className="order-items-list">{itemsHtml}</ul>
-                  <div><strong>Total: ${order.total.toFixed(2)}</strong></div>
-                  <p className="order-delivery">{DELIVERY_METHOD_LABELS[order.deliveryMethod]}</p>
+                  <div><strong>Total: {formatArs(order.total)}</strong></div>
+                  <p className="order-delivery">
+                    {DELIVERY_METHOD_LABELS[order.deliveryMethod]}
+                    {order.mpPaymentId ? ' · Mercado Pago' : ''}
+                  </p>
                   <div className="order-actions">
-                    {order.status === 'pending' ? (
+                    {canResolve ? (
                       <>
                         <button className="confirm-order-btn" type="button" onClick={() => handleConfirmOrder(order.id)}>Confirmar pago</button>
                         <button className="cancel-order-btn" type="button" onClick={() => handleCancelOrder(order.id)}>Cancelar</button>

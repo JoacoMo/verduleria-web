@@ -7,6 +7,7 @@ import { createPaymentPreference, isMercadoPagoEnabled } from '@/lib/mercadopago
 import { readJsonBody } from '@/lib/request-body';
 import { sanitizeText } from '@/lib/sanitize';
 import { formatArs } from '@/lib/format-price';
+import { ValidationError, parseCustomerPayload } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +24,7 @@ type CartItem = {
 type OrderRow = {
   id: number;
   total: number;
+  items: unknown;
   mpPreferenceId: string | null;
 };
 
@@ -42,6 +44,7 @@ function buildCheckoutResponse(order: OrderRow) {
   return {
     orderId: order.id,
     total: order.total,
+    items: order.items,
     checkoutUrl: order.mpPreferenceId
       ? `https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=${order.mpPreferenceId}`
       : null,
@@ -62,13 +65,31 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = await readJsonBody<{ cart?: unknown; isDelivery?: unknown; paymentMethod?: unknown; idempotencyKey?: unknown }>(request);
+  const parsed = await readJsonBody<{
+    cart?: unknown;
+    isDelivery?: unknown;
+    paymentMethod?: unknown;
+    idempotencyKey?: unknown;
+    customer?: unknown;
+  }>(request);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
   try {
     const cart = Array.isArray(body.cart) ? (body.cart as CartItem[]) : [];
     const deliveryMethod = body.isDelivery ? 'delivery' : 'pickup';
+
+    // Sin nombre y teléfono el pedido llegaba al panel sin saber de quién era, y
+    // si el cliente no mandaba el WhatsApp quedaba huérfano.
+    let customer;
+    try {
+      customer = parseCustomerPayload(body.customer, { isDelivery: deliveryMethod === 'delivery' });
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
+    }
 
     // Clave de idempotencia: se acota el largo y se limpia como cualquier otro
     // dato que entra por request. Si no viene, el checkout funciona igual (sin
@@ -170,6 +191,7 @@ export async function POST(request: Request) {
           status: 'pending',
           deliveryMethod,
           idempotencyKey,
+          ...customer,
         },
       });
     } catch (error) {
@@ -215,6 +237,10 @@ export async function POST(request: Request) {
     return NextResponse.json({
       orderId: order.id,
       total,
+      // Los ítems como los calculó el servidor (precio vigente, cantidad
+      // normalizada): el mensaje de WhatsApp se arma con esto y no con lo que
+      // tenía el carrito, que puede tener un precio viejo.
+      items: itemsForOrder,
       checkoutUrl,
       transferAlias: siteConfig.transferAlias,
       transferCbu: siteConfig.transferCbu,
