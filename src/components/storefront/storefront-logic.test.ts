@@ -1,89 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatArs } from '@/lib/format-price';
 import type { Product } from '@/lib/types';
 import { applyPriceChanges, markUnavailable, withServerPrice } from './catalog-updates';
 import { formatOfferEnds, formatPhoneForDisplay } from './format';
-import { buildOrderMessage, buildOrderWhatsappUrl, type OrderMessageInput } from './order-message';
 import { clampQuantity, fromDisplayQuantity, parseQuantityInput, toDisplayQuantity } from './quantity';
 import { toCartLines } from './storage';
 import { validateCheckout } from './use-checkout-form';
 
-// Los montos se arman con el mismo formateador que usa la tienda (Intl pone un
-// espacio duro entre "$" y el número, que no conviene escribir a mano).
-const ars = (text: string) => text.replace(/\$ ([\d.]+)/g, (_match, amount: string) => formatArs(Number(amount.replace(/\./g, ''))));
-
-function baseMessage(overrides: Partial<OrderMessageInput> = {}): OrderMessageInput {
-  return {
-    orderId: 123,
-    storeName: 'El Pampa',
-    customerName: '  Ana Pérez ',
-    items: [
-      { id: 1, name: 'Tomate', price: 800, quantity: 1.5, unit: 'kg' },
-      { id: 2, name: 'Acelga', price: 500, quantity: 2, unit: 'atado' },
-    ],
-    subtotal: 2200,
-    shippingCost: 4000,
-    total: 6200,
-    deliveryMethod: 'delivery',
-    customerAddress: 'Rosario de Santa Fe 1211',
-    deliverySlotId: '2026-10-05T13',
-    paymentMethod: 'transfer',
-    replacementPolicy: 'replace',
-    notes: 'Timbre 2B',
-    ...overrides,
-  };
-}
-
-describe('buildOrderMessage', () => {
-  it('arma el mensaje con negritas, ítems, envío, turno y pago', () => {
-    const message = buildOrderMessage(baseMessage());
-    const lines = message.split('\n');
-    expect(lines[0]).toBe('🥬 *Pedido #123 — El Pampa*');
-    expect(lines[1]).toBe('👤 Ana Pérez');
-    expect(message).toContain('🛒 *Productos*');
-    expect(message).toContain(ars('• 1,5 kg Tomate — $ 1.200'));
-    expect(message).toContain(ars('• 2 atados Acelga — $ 1.000'));
-    expect(message).toContain(ars('Subtotal: $ 2.200'));
-    expect(message).toContain(ars('Envío: $ 4.000'));
-    expect(message).toContain(ars('💰 *Total aprox.: $ 6.200*'));
-    expect(message).toContain('🚚 *Envío a domicilio:* Rosario de Santa Fe 1211');
-    expect(message).toContain('🕐 *Turno:* Lunes 5/10 de 13 a 14 h');
-    expect(message).toContain('💳 *Pago:* Transferencia (cuando me pasen el total final)');
-    expect(message).toContain('🔁 *Si falta algo:* Reemplazar por uno similar');
-    expect(message).toContain('📝 *Aclaraciones:* Timbre 2B');
-  });
-
-  it('sin nada por peso el total es exacto, y con retiro no hay subtotal ni envío', () => {
-    const message = buildOrderMessage(baseMessage({
-      items: [{ id: 2, name: 'Acelga', price: 500, quantity: 2, unit: 'atado' }],
-      subtotal: 1000,
-      shippingCost: 0,
-      total: 1000,
-      deliveryMethod: 'pickup',
-      customerAddress: null,
-      deliverySlotId: null,
-      paymentMethod: 'cash',
-      notes: '   ',
-    }));
-    expect(message).toContain(ars('💰 *Total: $ 1.000*'));
-    expect(message).not.toContain('aprox.');
-    expect(message).not.toContain('Subtotal');
-    expect(message).toContain('🏪 *Retiro en el local*');
-    expect(message).toContain('💵 *Pago:* Efectivo al retirar');
-    expect(message).not.toContain('Aclaraciones');
-  });
-
-  it('el envío gratis se escribe "gratis"', () => {
-    const message = buildOrderMessage(baseMessage({ shippingCost: 0 }));
-    expect(message).toContain('Envío: gratis');
-  });
-
-  it('el link va al número del local con el texto codificado', () => {
-    const url = buildOrderWhatsappUrl('5493517656500', baseMessage());
-    expect(url.startsWith('https://wa.me/5493517656500?text=')).toBe(true);
-    expect(decodeURIComponent(url.split('?text=')[1])).toBe(buildOrderMessage(baseMessage()));
-  });
-});
+// buildOrderMessage / buildOrderWhatsappUrl se testean en order-message.test.ts.
 
 describe('cantidades', () => {
   it('convierte entre kg y g para mostrar', () => {

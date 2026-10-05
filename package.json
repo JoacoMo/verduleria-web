@@ -8,7 +8,13 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "prisma:deploy": "prisma migrate deploy",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "check:bundle": "node scripts/check-client-bundle.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

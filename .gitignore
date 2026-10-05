@@ -21,3 +21,7 @@ scripts/precios/reportes/
 scripts/precios/logs/
 __pycache__/
 *.pyc
+
+# Tests: reportes de cobertura y caché de Vitest
+coverage/
+.vitest/

@@ -1,27 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { formatArs } from '@/lib/format-price';
-import type { OrderRecord, Product, StoreInfo } from '@/lib/types';
-import { buildFinalTotalMessage, buildReviewRequestMessage } from './order-messages';
+import type { OrderRecord, Product } from '@/lib/types';
 import { groupOrdersByDelivery, summarizeDay, totalLabel } from './orders-model';
 import { discountedPrice, productToFormState, validateOffer, validateProductForm, EMPTY_PRODUCT_FORM } from './product-form-model';
 import { firstName, formatQuantityInput, parseMoneyInput, parseQuantityInput, shiftDate } from './format';
-
-const STORE: StoreInfo = {
-  storeName: 'El Pampa',
-  storeAddress: 'Rosario de Santa Fe 1211, Barrio General Paz, Córdoba Capital',
-  storeNeighborhood: 'Barrio General Paz',
-  storeHours: { weekday: 'Lunes a sábado', sunday: 'Domingos' },
-  transferAlias: 'el.pampa.verdu',
-  transferCbu: '0000003100000000000001',
-  whatsappNumber: '5493510000000',
-  contactEmail: 'hola@example.com',
-  instagramUrl: '',
-  googleReviewUrl: 'https://g.page/r/elpampa/review',
-  deliveryMaxWeightKg: 7,
-  deliveryMinPurchase: 10000,
-  deliveryFee: 4000,
-  deliveryFreeThreshold: 20000,
-};
 
 function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
   return {
@@ -49,53 +30,7 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
   };
 }
 
-describe('buildFinalTotalMessage', () => {
-  it('arma el detalle con pesos reales, envío, turno y datos de transferencia', () => {
-    const text = buildFinalTotalMessage(order(), STORE);
-    expect(text.startsWith('*Hola Ana!* tu pedido #123 de El Pampa ya está armado ✅')).toBe(true);
-    expect(text).toContain(`• 1,35 kg de Tomate: ${formatArs(1080)}`);
-    expect(text).toContain(`• 2 atados de Acelga: ${formatArs(1800)}`);
-    expect(text).toContain(`Envío: ${formatArs(4000)}`);
-    expect(text).toContain(`*Total final: ${formatArs(6880)}* (envío incluido)`);
-    expect(text).toContain('Te lo llevamos el martes 6/10 de 13 a 14 h a Av. Colón 123.');
-    // El alias va sin asteriscos: si no, al copiarlo se copian también.
-    expect(text).toContain('\nAlias: el.pampa.verdu\n');
-    expect(text).toContain('CBU: 0000003100000000000001');
-    expect(text).toContain('mandanos el comprobante por acá');
-  });
-
-  it('en efectivo con retiro no manda alias y dice que paga al retirar', () => {
-    const text = buildFinalTotalMessage(order({ deliveryMethod: 'pickup', paymentMethod: 'cash', shippingCost: 0, total: 2880, deliverySlot: null }), STORE);
-    expect(text).toContain(`*Total final: ${formatArs(2880)}*`);
-    expect(text).not.toContain('Envío');
-    expect(text).not.toContain('Alias');
-    expect(text).toContain('Ya lo podés pasar a retirar por Rosario de Santa Fe 1211');
-    expect(text).toContain('Lo pagás en efectivo al retirarlo.');
-  });
-
-  it('en efectivo con envío gratis lo aclara y dice que paga al recibir', () => {
-    const text = buildFinalTotalMessage(order({ paymentMethod: 'cash', shippingCost: 0, total: 2880 }), STORE);
-    expect(text).toContain('Envío: gratis');
-    expect(text).toContain('(envío gratis)');
-    expect(text).toContain('Lo pagás en efectivo al recibirlo.');
-  });
-
-  it('sin nombre saluda igual y sin CBU no pone la línea', () => {
-    const text = buildFinalTotalMessage(order({ customerName: null }), { ...STORE, transferCbu: '' });
-    expect(text.startsWith('*Hola!* tu pedido')).toBe(true);
-    expect(text).not.toContain('CBU');
-  });
-});
-
-describe('buildReviewRequestMessage', () => {
-  it('solo con el pedido pagado y el link configurado', () => {
-    expect(buildReviewRequestMessage(order({ status: 'pending' }), STORE)).toBeNull();
-    expect(buildReviewRequestMessage(order({ status: 'paid' }), { ...STORE, googleReviewUrl: '' })).toBeNull();
-    const text = buildReviewRequestMessage(order({ status: 'paid' }), STORE);
-    expect(text).toContain('*Hola Ana!*');
-    expect(text).toContain('https://g.page/r/elpampa/review');
-  });
-});
+// buildFinalTotalMessage / buildReviewRequestMessage se testean en order-messages.test.ts.
 
 describe('totalLabel', () => {
   it('distingue final, estimado y exacto', () => {
