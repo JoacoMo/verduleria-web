@@ -1,8 +1,10 @@
+import 'server-only';
 import { unstable_cache, revalidateTag } from 'next/cache';
 import { prisma } from './prisma';
 import { isProductUnit } from './product-units';
 import { isProductCategory } from './product-categories';
 import type { Product } from './types';
+import type { Product as ProductRow } from '@prisma/client';
 
 /**
  * Lectura del catálogo, cacheada.
@@ -24,24 +26,41 @@ export const PRODUCTS_CACHE_TAG = 'productos';
 
 const CACHE_SECONDS = 60;
 
-/** Los no disponibles van al final; dentro de cada grupo, alfabético. */
+/**
+ * Los no disponibles van al final; dentro de cada grupo, alfabético.
+ *
+ * Es UNA sola consulta sin relaciones (no hay N+1 posible: categoría e imagen son
+ * columnas del producto). Con un catálogo de verdulería (cientos de filas como
+ * mucho) Postgres la resuelve con un seq scan más rápido que cualquier índice, y
+ * encima queda cacheada: no hace falta indexar name/category/available.
+ */
 const PRODUCT_ORDER = [{ available: 'desc' as const }, { name: 'asc' as const }];
 
-async function fetchProductsFromDb(): Promise<Product[]> {
-  const products = await prisma.product.findMany({ orderBy: PRODUCT_ORDER });
-
-  // Prisma devuelve unit/category como string y createdAt como Date; se acota acá
-  // para que todo el resto de la app reciba el tipo ya validado y serializable.
-  return products.map((product) => ({
+/**
+ * Fila de la base → Product. Prisma devuelve unit/category como string y las
+ * fechas como Date; se acota acá para que todo el resto de la app (y las
+ * respuestas del panel) reciba el tipo ya validado y serializable.
+ */
+export function toProduct(product: ProductRow): Product {
+  return {
     id: product.id,
     name: product.name,
     price: product.price,
     image: product.image,
     unit: isProductUnit(product.unit) ? product.unit : 'kg',
     category: isProductCategory(product.category) ? product.category : 'Almacén',
+    description: product.description,
+    offerPrice: product.offerPrice,
+    offerEndsAt: product.offerEndsAt ? product.offerEndsAt.toISOString() : null,
     available: product.available,
     createdAt: product.createdAt.toISOString(),
-  }));
+    updatedAt: product.updatedAt.toISOString(),
+  };
+}
+
+async function fetchProductsFromDb(): Promise<Product[]> {
+  const products = await prisma.product.findMany({ orderBy: PRODUCT_ORDER });
+  return products.map(toProduct);
 }
 
 export const getCachedProducts = unstable_cache(

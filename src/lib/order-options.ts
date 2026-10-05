@@ -1,4 +1,8 @@
 /**
+ * Opciones del pedido que elige el cliente en el checkout.
+ */
+
+/**
  * Qué hacer si al armar el pedido falta algo (o no está lindo).
  *
  * Es lo que preguntan todas las verdulerías online serias: el stock de fruta y
@@ -19,9 +23,40 @@ export function isReplacementPolicy(value: unknown): value is ReplacementPolicy 
   return typeof value === 'string' && (REPLACEMENT_POLICIES as readonly string[]).includes(value);
 }
 
-export const ORDER_STATUS_LABELS: Record<string, string> = {
+/**
+ * Medios de pago. No hay cobro online: se paga por transferencia (cuando el
+ * local confirma el total final, después de pesar) o en efectivo al recibir o
+ * retirar.
+ */
+export const PAYMENT_METHODS = ['transfer', 'cash'] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  transfer: 'Transferencia',
+  cash: 'Efectivo',
+};
+
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return typeof value === 'string' && (PAYMENT_METHODS as readonly string[]).includes(value);
+}
+
+export const DELIVERY_METHODS = ['pickup', 'delivery'] as const;
+
+export type DeliveryMethod = (typeof DELIVERY_METHODS)[number];
+
+export const DELIVERY_METHOD_LABELS: Record<DeliveryMethod, string> = {
+  pickup: 'Retiro en el local',
+  delivery: 'Envío a domicilio',
+};
+
+export const ORDER_STATUSES = ['pending', 'paid', 'cancelled', 'failed'] as const;
+
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   pending: 'Pendiente',
   paid: 'Pagado',
   cancelled: 'Cancelado',
-  failed: 'Pago rechazado',
+  failed: 'Con problema',
 };

@@ -15,3 +15,9 @@ node_modules
 .mcp.json
 skills-lock.json
 tsconfig.tsbuildinfo
+
+# Script de precios: reportes y logs locales
+scripts/precios/reportes/
+scripts/precios/logs/
+__pycache__/
+*.pyc

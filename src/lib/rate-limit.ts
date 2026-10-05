@@ -1,11 +1,12 @@
+import { logSecurityEvent } from './security-log';
+
 /**
  * Limitador de intentos en memoria.
  *
  * IMPORTANTE: en Vercel cada instancia serverless tiene su propia memoria, así que
  * esto NO es un límite global exacto: si hay varias instancias activas, un atacante
  * podría hacer N veces el límite. Igual sube muchísimo el costo de un ataque de
- * fuerza bruta contra el login (que hoy no tiene ninguna barrera) y frena el spam
- * de pedidos desde un mismo cliente.
+ * fuerza bruta contra el login y frena el spam de pedidos desde un mismo cliente.
  *
  * Para un límite real y distribuido hay que apoyarse en algo compartido
  * (Vercel Firewall con rate limiting, o Upstash Redis). Ver README.
@@ -95,12 +96,12 @@ export const RATE_LIMITS = {
   checkout: { limit: 12, windowMs: 10 * 60 * 1000 },
   /** Lecturas públicas (catálogo, datos del local). */
   publicRead: { limit: 120, windowMs: 60 * 1000 },
+  /** Lecturas del panel (pedidos, sesión): el panel refresca seguido. */
+  adminRead: { limit: 120, windowMs: 60 * 1000 },
   /** Mutaciones del panel: el dueño no hace más que esto en una sesión normal. */
   adminWrite: { limit: 60, windowMs: 60 * 1000 },
   /** Subida de imágenes: cara en ancho de banda y storage. */
   upload: { limit: 20, windowMs: 10 * 60 * 1000 },
-  /** Webhook de pagos: MP reintenta, pero no debería pasar de esto. */
-  webhook: { limit: 100, windowMs: 60 * 1000 },
 } as const;
 
 export type RateLimitPreset = keyof typeof RATE_LIMITS;
@@ -119,14 +120,12 @@ export function enforceRateLimit(request: Request, preset: RateLimitPreset, mess
 
   if (result.ok) return null;
 
-  console.error(JSON.stringify({
-    secEvent: 'rate_limit',
-    ts: new Date().toISOString(),
+  logSecurityEvent('rate_limit', {
     ip,
     path: new URL(request.url).pathname,
     method: request.method,
     reason: `superó ${limit} req en ${windowMs / 1000}s (${preset})`,
-  }));
+  });
 
   return tooManyRequestsResponse(
     result.retryAfterSeconds,

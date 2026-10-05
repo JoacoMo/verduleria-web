@@ -9,29 +9,58 @@ datasource db {
 }
 
 model Product {
-  id        Int      @id @default(autoincrement())
-  name      String
-  price     Float
-  image     String
-  unit      String   @default("kg")
-  category  String   @default("Almacén")
+  id          Int       @id @default(autoincrement())
+  name        String
+  // Precio normal (sin oferta), por la unidad de venta.
+  price       Float
+  image       String
+  unit        String    @default("kg")
+  category    String    @default("Almacén")
+  // Texto corto opcional. En los bolsones se usa para listar qué trae.
+  description String?
+  // Oferta: si hay offerPrice, ese es el precio que se cobra mientras no venza
+  // offerEndsAt (null = sin vencimiento). Ver src/lib/pricing.ts.
+  offerPrice  Float?
+  offerEndsAt DateTime?
   // Lo maneja el dueño desde el panel. Los que están en false se muestran
   // al final de la tienda y no se pueden agregar al carrito.
-  available Boolean  @default(true)
-  createdAt DateTime @default(now())
+  available   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  // Fecha real de última modificación: la usa el sitemap.
+  updatedAt   DateTime  @default(now()) @updatedAt
+}
+
+enum OrderStatus {
+  pending
+  paid
+  cancelled
+  failed
 }
 
 model Order {
-  id                Int      @id @default(autoincrement())
-  items             Json // [{ id, name, price, quantity }]
+  id                Int         @id @default(autoincrement())
+  items             Json // [{ id, name, price, quantity, unit }]
+  // Suma de los ítems (sin envío).
+  subtotal          Float       @default(0)
+  // Costo de envío fijo que se le cobra al cliente (0 si es retiro o envío gratis).
+  shippingCost      Float       @default(0)
+  // subtotal + shippingCost. En lo que va por peso es estimado hasta que el dueño
+  // ajusta el pedido con los pesos reales (adjustedAt deja de ser null).
   total             Float
-  status            String   @default("pending") // pending | paid | failed
-  deliveryMethod    String   @default("pickup") // pickup | delivery
-  // Clave que manda el navegador para que tocar "pagar" dos veces no genere
+  status            OrderStatus @default(pending)
+  deliveryMethod    String      @default("pickup") // pickup | delivery
+  // transfer | cash. Ver src/lib/order-options.ts.
+  paymentMethod     String?
+  // Turno de entrega elegido, ej. "2026-10-06T13". Ver src/lib/delivery-slots.ts.
+  deliverySlot      String?
+  // Cuándo el dueño cargó los pesos reales y fijó el total final.
+  adjustedAt        DateTime?
+  // Clave que manda el navegador para que tocar "pedir" dos veces no genere
   // dos pedidos: si ya existe una con esta clave, se devuelve ese mismo pedido.
   // El índice único es lo que garantiza que no se cuelen duplicados aunque
   // lleguen dos requests exactamente a la vez.
-  idempotencyKey    String?  @unique
+  idempotencyKey    String?     @unique
+  // Históricos de cuando se cobraba con Mercado Pago. Ya no se usan.
   mpPreferenceId    String?
   mpPaymentId       String?
   customerName      String?
@@ -42,8 +71,10 @@ model Order {
   notes             String?
   // Qué hacer si falta algo al armar: replace | skip | call. Ver src/lib/order-options.ts.
   replacementPolicy String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   @@index([createdAt])
+  // Para la limpieza diaria de pedidos viejos sin cobrar.
+  @@index([status, createdAt])
 }

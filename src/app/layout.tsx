@@ -1,41 +1,95 @@
-import { Analytics } from "@vercel/analytics/next";
-import type { Metadata } from 'next';
+import { Analytics } from '@vercel/analytics/next';
+import type { Metadata, Viewport } from 'next';
+import { Caveat, DM_Mono, Work_Sans } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { siteConfig } from '@/lib/site';
+import { OG_IMAGE } from '@/lib/seo';
 import './globals.css';
 
+/**
+ * Fuentes con next/font: se descargan en el build y se sirven desde el propio
+ * dominio. Así no hay pedidos a Google Fonts (ni preconnect, ni excepciones en la
+ * CSP) y el texto no "salta" al cargar, porque next/font ajusta la fuente de
+ * respaldo a las medidas de la real.
+ *
+ * Cada una expone una variable CSS que usa globals.css:
+ * - Caveat (--font-display): títulos tipo pizarrón.
+ * - Work Sans (--font-body): todo el texto.
+ * - DM Mono (--font-mono): precios y cantidades.
+ */
+const displayFont = Caveat({
+  subsets: ['latin'],
+  weight: ['600', '700'],
+  display: 'swap',
+  variable: '--font-display',
+});
+
+const bodyFont = Work_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-body',
+});
+
+const monoFont = DM_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  display: 'swap',
+  variable: '--font-mono',
+});
+
+const defaultTitle = `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`;
+
+/**
+ * Metadata base. Cada página pública pisa título, descripción, canónica y
+ * openGraph con buildPageMetadata (src/lib/seo.ts); acá queda lo común y lo que
+ * usan las páginas que no definen nada (las privadas, que igual van con noindex).
+ *
+ * openGraph no lleva título ni URL: si los tuviera, una página sin openGraph
+ * propio se compartiría con el título y la URL de la home. Sin ellos, Next los
+ * completa con el título y la descripción de cada página.
+ */
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.siteUrl),
   title: {
-    default: `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`,
+    default: defaultTitle,
     template: `%s | ${siteConfig.storeName}`,
   },
-  description: 'Verdulería y frutería en Barrio General Paz, Córdoba Capital. Pedidos por kilo, gramos o unidad con retiro y envíos coordinados.',
+  description: `Verdulería y frutería en ${siteConfig.storeNeighborhood}, Córdoba Capital. Frutas, verduras y bolsones por kilo, gramo o unidad, con retiro en el local o envío a domicilio.`,
+  applicationName: siteConfig.storeName,
   keywords: [
-    'El Pampa',
+    siteConfig.storeName,
     'verdulería en Córdoba Capital',
-    'verdulería Barrio General Paz',
+    `verdulería ${siteConfig.storeNeighborhood}`,
     'frutería Córdoba',
-    'frutas y verduras a domicilio',
-    'verdulería cerca de mí',
-    'verdulería online Córdoba',
     'frutas y verduras a domicilio Córdoba',
-    'envío de verduras Barrio General Paz',
-    'comprar verdura online Córdoba Capital',
+    'bolsones de frutas y verduras Córdoba',
+    'verdulería online Córdoba',
+    'ofertas verdulería Córdoba',
   ],
+  // iOS convierte en link de llamada cualquier tira de números (el CBU, por
+  // ejemplo). Los teléfonos del sitio ya son links explícitos de WhatsApp.
+  formatDetection: { telephone: false },
   openGraph: {
-    title: `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`,
-    description: 'Frutas y verduras frescas en Barrio General Paz, Córdoba Capital. Pedidos por kilo, gramos o unidad.',
-    url: siteConfig.siteUrl,
     siteName: siteConfig.storeName,
     locale: 'es_AR',
     type: 'website',
+    images: [OG_IMAGE],
   },
   twitter: {
     card: 'summary_large_image',
-    title: `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`,
-    description: 'Frutas y verduras frescas en Barrio General Paz, Córdoba Capital. Pedidos por kilo, gramos o unidad.',
   },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  // Color del pizarrón (--chalkboard): la barra del navegador en el celular
+  // sigue al menú de arriba.
+  themeColor: '#1E2E22',
+  // El sitio no tiene modo oscuro: sin esto, algunos navegadores oscurecen los
+  // campos de formulario y quedan mal sobre el fondo claro.
+  colorScheme: 'light',
 };
 
 /**
@@ -47,22 +101,17 @@ export const metadata: Metadata = {
  * era estática y el formulario de login no respondía.
  *
  * El costo es perder el cacheo estático de las páginas simples (términos,
- * privacidad, estados de pago). Para el tráfico de este sitio es aceptable, y a
- * cambio la CSP protege de verdad en todas las rutas.
+ * privacidad, envíos). Para el tráfico de este sitio es aceptable, y a cambio la
+ * CSP protege de verdad en todas las rutas.
  */
 export const dynamic = 'force-dynamic';
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="es">
+    <html lang="es-AR" className={`${displayFont.variable} ${bodyFont.variable} ${monoFont.variable}`}>
       <body>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
-        />
         {children}
+        <Analytics />
       </body>
     </html>
   );

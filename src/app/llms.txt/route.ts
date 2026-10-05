@@ -1,7 +1,12 @@
 import { getCachedProducts } from '@/lib/products';
 import { siteConfig } from '@/lib/site';
-import { PRODUCT_UNIT_LABELS } from '@/lib/product-units';
+import { PRODUCT_UNIT_LABELS, isWeightUnit } from '@/lib/product-units';
+import { PRODUCT_CATEGORIES } from '@/lib/product-categories';
 import { formatArs } from '@/lib/format-price';
+import { getDiscountPercent, getEffectivePrice, isOfferActive } from '@/lib/pricing';
+import { DELIVERY_WINDOWS, SLOT_ORDER_LEAD_MINUTES } from '@/lib/delivery-slots';
+import { OPENING_WINDOWS, ORDER_CUTOFF_LABEL, TIMEZONE, formatMinutes } from '@/lib/store-hours';
+import type { Product } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const revalidate = 600;
@@ -13,30 +18,124 @@ export const revalidate = 600;
  * los datos que un modelo necesita para responder sobre el local. No reemplaza al
  * HTML ni a los datos estructurados, pero es barato de mantener y algunos
  * crawlers ya lo buscan.
+ *
+ * Todo sale de las mismas fuentes que la tienda (siteConfig, pricing.ts,
+ * delivery-slots.ts, store-hours.ts): si cambia un precio, un horario o el costo
+ * del envío, este archivo cambia solo.
  */
+
+const offerEndFormatter = new Intl.DateTimeFormat('es-AR', { timeZone: TIMEZONE, day: 'numeric', month: 'numeric' });
+
+/** "de 13 a 14 h y de 19 a 20 h". */
+function windowsText(windows: typeof DELIVERY_WINDOWS) {
+  const hour = (minutes: number) => (minutes % 60 === 0 ? String(minutes / 60) : formatMinutes(minutes));
+  return windows.map(({ start, end }) => `de ${hour(start)} a ${hour(end)} h`).join(' y ');
+}
+
+/** Turnos de envío del domingo, derivados del horario del local (el domingo se cierra antes). */
+function sundayDeliveryText() {
+  const sunday = DELIVERY_WINDOWS.filter(({ start, end }) =>
+    (OPENING_WINDOWS[0] ?? []).some(([open, close]) => start >= open && end <= close),
+  );
+  if (sunday.length === DELIVERY_WINDOWS.length) return '';
+  if (sunday.length === 0) return ' Los domingos no hay envíos.';
+  return ` Los domingos solo ${windowsText(sunday)}.`;
+}
+
+function leadTimeText() {
+  return SLOT_ORDER_LEAD_MINUTES % 60 === 0
+    ? `${SLOT_ORDER_LEAD_MINUTES / 60} ${SLOT_ORDER_LEAD_MINUTES === 60 ? 'hora' : 'horas'}`
+    : `${SLOT_ORDER_LEAD_MINUTES} minutos`;
+}
+
+/** Una descripción de varias líneas ("2 kg papa\n1 kg cebolla") en una sola: "2 kg papa, 1 kg cebolla". */
+function singleLine(text: string) {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim().replace(/[,;.]$/, ''))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function priceText(product: Product, now: Date) {
+  return `${formatArs(getEffectivePrice(product, now))} por ${PRODUCT_UNIT_LABELS[product.unit]}`;
+}
+
+function stockText(product: Product) {
+  return product.available ? '' : ' — SIN STOCK por ahora';
+}
+
+function bolsonLine(product: Product, now: Date) {
+  const description = product.description ? ` Trae: ${singleLine(product.description)}.` : '';
+  return `- ${product.name}: ${priceText(product, now)}${stockText(product)}.${description}`;
+}
+
+function offerLine(product: Product, now: Date) {
+  const endsAt = product.offerEndsAt ? `, hasta el ${offerEndFormatter.format(new Date(product.offerEndsAt))}` : '';
+  return `- ${product.name}: ${priceText(product, now)} (antes ${formatArs(product.price)}, -${getDiscountPercent(product, now)}%${endsAt})${stockText(product)}`;
+}
+
+function catalogLine(product: Product, now: Date) {
+  const offer = isOfferActive(product, now) ? ' (en oferta)' : '';
+  return `- ${product.name}: ${priceText(product, now)}${offer}${stockText(product)}`;
+}
+
+function buildProductSections(products: Product[], now: Date) {
+  const sections: string[] = [];
+
+  const bolsones = products.filter((product) => product.category === 'Bolsones');
+  if (bolsones.length > 0) {
+    sections.push(`## Bolsones\n\nBolsones ya armados por el local, a precio cerrado.\n\n${bolsones.map((p) => bolsonLine(p, now)).join('\n')}`);
+  }
+
+  const offers = products.filter((product) => isOfferActive(product, now));
+  if (offers.length > 0) {
+    sections.push(`## Ofertas vigentes\n\n${offers.map((p) => offerLine(p, now)).join('\n')}`);
+  }
+
+  const byCategory = PRODUCT_CATEGORIES
+    .filter((category) => category !== 'Bolsones')
+    .map((category) => ({ category, items: products.filter((product) => product.category === category) }))
+    .filter(({ items }) => items.length > 0)
+    .map(({ category, items }) => `### ${category}\n\n${items.map((p) => catalogLine(p, now)).join('\n')}`);
+  if (byCategory.length > 0) {
+    sections.push(`## Catálogo\n\nPrecios orientativos: el precio vigente siempre es el del sitio.\n\n${byCategory.join('\n\n')}`);
+  }
+
+  return sections.join('\n\n');
+}
+
 export async function GET() {
-  let productLines = '';
+  const now = new Date();
+  let productSections = '';
+  let hasWeightProducts = true;
 
   try {
     const products = await getCachedProducts();
     if (products.length > 0) {
-      productLines = products
-        .map((product) => {
-          const unit = PRODUCT_UNIT_LABELS[product.unit as keyof typeof PRODUCT_UNIT_LABELS] ?? product.unit;
-          const estado = product.available ? '' : ' — SIN STOCK por ahora';
-          return `- ${product.name}: $${product.price.toFixed(2)} por ${unit} (${product.category})${estado}`;
-        })
-        .join('\n');
+      productSections = buildProductSections(products, now);
+      hasWeightProducts = products.some((product) => isWeightUnit(product.unit));
     }
   } catch (error) {
     console.error('Error al cargar productos para /llms.txt:', error);
   }
 
+  const { siteUrl } = siteConfig;
+  const contactLines = [
+    `- WhatsApp: +${siteConfig.whatsappNumber}`,
+    siteConfig.contactEmail ? `- Email: ${siteConfig.contactEmail}` : '',
+    siteConfig.instagramUrl ? `- Instagram: ${siteConfig.instagramUrl}` : '',
+  ].filter(Boolean).join('\n');
+
+  const weightNote = hasWeightProducts
+    ? `- Lo que se vende por peso (por kilo o por gramo) tiene total ESTIMADO: el local pesa, ajusta el pedido y le manda al cliente el total final por WhatsApp. Si el pedido no tiene nada por peso, el total es exacto.\n`
+    : '';
+
   const body = `# ${siteConfig.storeName}
 
-> Verdulería y frutería de barrio en Córdoba Capital, Argentina. Frutas, verduras y
-> productos de almacén frescos, por kilo, por gramo o por unidad, con retiro en el
-> local y envío a domicilio.
+> Verdulería y frutería de barrio en ${siteConfig.storeNeighborhood}, Córdoba Capital, Argentina.
+> Frutas, verduras, bolsones armados y productos de almacén, con retiro en el local
+> o envío a domicilio en dos turnos por día. Se paga por transferencia o en efectivo.
 
 ## Datos del local
 
@@ -45,28 +144,39 @@ export async function GET() {
 - Dirección: ${siteConfig.storeAddress}
 - Barrio: ${siteConfig.storeNeighborhood}
 - Ciudad: Córdoba Capital, Provincia de Córdoba, Argentina
-- Sitio web: ${siteConfig.siteUrl}
-- WhatsApp: +${siteConfig.whatsappNumber}
+- Sitio web: ${siteUrl}
+${contactLines}
 - Horarios: ${siteConfig.storeHours.weekday}. ${siteConfig.storeHours.sunday}.
 
-## Compras y envíos
+## Cómo comprar
 
-- Los pedidos se hacen desde el sitio web y se abonan por transferencia bancaria.
-- Después de pagar, el cliente envía el comprobante por WhatsApp.
-- Retiro en el local: sin costo.
-- Envío a domicilio en Córdoba Capital, coordinado por ${siteConfig.deliveryProviderName}.
-- Pedido mínimo para envío: ${formatArs(siteConfig.deliveryMinPurchase)}.
-- Envío gratis en pedidos desde ${formatArs(siteConfig.deliveryFreeThreshold)}.
-- Peso máximo orientativo por envío: ${siteConfig.deliveryMaxWeightKg} kg.
-- Las cantidades se eligen por kilo, por gramo o por unidad según el producto.
+- El pedido se arma en el sitio web: se elige retiro o envío y el medio de pago, y el pedido llega al local.
+${weightNote}- Medios de pago: transferencia bancaria o efectivo. No se cobra con tarjeta por la web.
+- Transferencia: se transfiere el total final que confirma el local por WhatsApp (no antes).
+- Efectivo: se paga al recibir el pedido o al retirarlo.
+- Las cantidades se eligen por kilo, por gramo, por unidad, por atado o por bandeja según el producto.
+- Ofertas: algunos productos tienen precio de oferta por tiempo limitado; el precio que se cobra es el vigente al hacer el pedido.
 
-## Productos
-${productLines ? `\n${productLines}\n` : '\nConsultar el catálogo actualizado en el sitio.\n'}
+## Retiro y envíos
+
+- Retiro en el local: sin costo y sin turno, en el horario de atención. Los pedidos para retirar hechos después de las ${ORDER_CUTOFF_LABEL} se preparan al día siguiente.
+- Envío a domicilio en Córdoba Capital, en dos turnos fijos: ${windowsText(DELIVERY_WINDOWS)}.${sundayDeliveryText()} Hay que pedir con al menos ${leadTimeText()} de anticipación.
+- Costo del envío: ${formatArs(siteConfig.deliveryFee)} fijo. Gratis en pedidos desde ${formatArs(siteConfig.deliveryFreeThreshold)} en productos.
+- Pedido mínimo para envío: ${formatArs(siteConfig.deliveryMinPurchase)} en productos (sin contar el envío).
+- Peso orientativo por envío: hasta ${siteConfig.deliveryMaxWeightKg} kg; pedidos más pesados se coordinan por WhatsApp.
+
+${productSections || '## Productos\n\nConsultar el catálogo actualizado en el sitio.'}
+
 ## Páginas
 
-- ${siteConfig.siteUrl} — tienda online y catálogo
-- ${siteConfig.siteUrl}/terminos — términos y condiciones
-- ${siteConfig.siteUrl}/privacidad — política de privacidad
+- ${siteUrl} — tienda online y catálogo
+- ${siteUrl}/bolsones — bolsones armados
+- ${siteUrl}/ofertas — ofertas vigentes
+- ${siteUrl}/frutas — frutas
+- ${siteUrl}/verduras — verduras
+- ${siteUrl}/envios — envíos, turnos y costos
+- ${siteUrl}/terminos — términos y condiciones
+- ${siteUrl}/privacidad — política de privacidad
 `;
 
   return new Response(body, {

@@ -1,0 +1,7 @@
+# Librerías del script de precios (scripts/actualizar_precios.py).
+# Instalar con:  python -m pip install -r scripts/requirements.txt
+# Necesita Python 3.10 o más nuevo. Probado con Python 3.11, pandas 3.0.6,
+# openpyxl 3.1.5 y requests 2.34.2.
+pandas>=2.2
+openpyxl>=3.1
+requests>=2.31

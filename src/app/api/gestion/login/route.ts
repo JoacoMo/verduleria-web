@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createAdminToken, safeCompare } from '@/lib/auth';
+import { safeCompare, setAdminSessionCookie } from '@/lib/auth';
 import { RATE_LIMITS, checkRateLimit, getClientIp, resetRateLimit, tooManyRequestsResponse } from '@/lib/rate-limit';
 import { logSecurityEvent } from '@/lib/security-log';
 import { sanitizeText } from '@/lib/sanitize';
@@ -73,7 +73,8 @@ export async function POST(request: Request) {
     resetRateLimit(rateLimitKey);
     logSecurityEvent('login_ok', { ip, path: '/api/gestion/login', method: 'POST' });
 
-    return NextResponse.json({ token: createAdminToken() });
+    // El token va en una cookie httpOnly: el JavaScript del panel nunca lo ve.
+    return setAdminSessionCookie(NextResponse.json({ ok: true }));
   } catch (error) {
     console.error('Error en POST /api/gestion/login:', error);
     return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });

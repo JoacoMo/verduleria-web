@@ -14,8 +14,7 @@ export type SecurityEvent =
   | 'login_ok'
   | 'rate_limit'
   | 'token_invalido'
-  | 'webhook_firma_invalida'
-  | 'pago_monto_distinto'
+  | 'cron_no_autorizado'
   | 'validacion_rechazada'
   | 'origen_bloqueado'
   | 'upload_rechazado'
@@ -34,7 +33,7 @@ type SecurityLogDetails = {
 // destaquen en el panel de logs; el resto como warning.
 const HIGH_SEVERITY: SecurityEvent[] = [
   'rate_limit',
-  'webhook_firma_invalida',
+  'cron_no_autorizado',
   'token_invalido',
   'origen_bloqueado',
 ];

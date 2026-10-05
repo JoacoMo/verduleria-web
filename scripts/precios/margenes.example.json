@@ -1,0 +1,76 @@
+{
+  "_comentario": "Copiá este archivo como margenes.json (en esta misma carpeta) y cambiá los números. Las claves que empiezan con _ son comentarios y el script las ignora. Explicación de cada campo en README.md.",
+
+  "url": "https://elpampa.vercel.app",
+
+  "_margenes": "Ganancia sobre el costo, en %. 50 = se vende a costo + 50%. 'default' se usa para cualquier categoría que no esté.",
+  "margenes_pct": {
+    "Frutas": 45,
+    "Verduras": 50,
+    "Almacén": 30,
+    "Bolsones": 35,
+    "Ofertas": 25,
+    "default": 40
+  },
+
+  "_margenes_por_producto": "Opcional: un margen distinto para un producto puntual (pisa al de su categoría).",
+  "margenes_por_producto_pct": {
+    "Palta": 45
+  },
+
+  "_redondeo": "Redondeo comercial. modo: arriba | cercano | abajo. Cada tramo dice hasta qué precio usa qué múltiplo; el último no lleva 'hasta'.",
+  "redondeo": {
+    "modo": "arriba",
+    "tramos": [
+      { "hasta": 1000, "multiplo": 10 },
+      { "hasta": 10000, "multiplo": 50 },
+      { "multiplo": 100 }
+    ]
+  },
+
+  "_limite": "Cambio máximo (en %, para arriba o para abajo) que se aplica sin --forzar. Frena los errores de tipeo de la lista.",
+  "limite_cambio_pct": 40,
+
+  "_umbrales": "Qué tan parecido tiene que ser el nombre (0 a 1). Por debajo de umbral_match no se toca; entre umbral_dudoso y umbral_match se reporta como 'match dudoso'.",
+  "umbral_match": 0.85,
+  "umbral_dudoso": 0.6,
+
+  "_alias": "Nombre como viene en la lista -> nombre del producto en la tienda. Sin importar mayúsculas ni tildes.",
+  "alias": {
+    "tomate perita": "Tomate",
+    "papa negra": "Papa",
+    "zapallo anco": "Zapallo",
+    "banana ecuador": "Banana",
+    "naranja jugo": "Naranja",
+    "palta hass": "Palta"
+  },
+
+  "_kg_por_unidad": "Para lo que la lista vende por kilo y la tienda por unidad/atado/bandeja: cuánto pesa cada una, en kg.",
+  "kg_por_unidad": {
+    "Palta": 0.25
+  },
+
+  "_columnas": "Solo si la autodetección no encuentra las columnas: el nombre exacto del encabezado en la lista. null = autodetectar.",
+  "columnas": {
+    "producto": null,
+    "precio": null,
+    "unidad": null,
+    "kilos": null,
+    "unidades": null
+  },
+
+  "_precio_por": "auto = lo deduce de cada renglón; bulto = el precio siempre es por bulto; kg = el precio siempre es por kilo.",
+  "precio_por": "auto",
+
+  "_sin_stock": "Con --marcar-sin-stock, solo estas categorías pasan a sin stock si no vienen en la lista (Almacén y Bolsones no se compran en el mercado).",
+  "categorias_sin_stock": ["Frutas", "Verduras"],
+
+  "_excluidos": "Productos o categorías que el script nunca toca (por ejemplo, los bolsones, que se arman a mano).",
+  "categorias_excluidas": ["Bolsones"],
+  "productos_excluidos": [],
+
+  "_ignorar": "Renglones de la lista que no son productos.",
+  "ignorar_en_lista": ["flete", "envases"],
+
+  "tamano_lote": 200
+}

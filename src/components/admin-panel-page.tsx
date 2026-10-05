@@ -1,651 +1,497 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import './admin/admin.css';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { ClipboardList, LogOut, Package, Plus, RefreshCw } from 'lucide-react';
 import { ADMIN_API, ADMIN_ROUTES } from '@/lib/routes';
-import type { FormEvent } from 'react';
-import type { OrderRecord, Product } from '@/lib/types';
-import { PRODUCT_UNIT_LABELS, formatProductQuantity } from '@/lib/product-units';
-import { matchesSearch } from '@/lib/search';
-import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
-import { ORDER_STATUS_LABELS, REPLACEMENT_POLICY_LABELS, isReplacementPolicy } from '@/lib/order-options';
+import type { OrderRecord, Product, StoreInfo } from '@/lib/types';
 import { formatArs } from '@/lib/format-price';
-
-const INITIAL_VISIBLE_PRODUCTS = 5;
-
-type ProductSort = 'alpha' | 'newest' | 'oldest';
-
-const DELIVERY_METHOD_LABELS: Record<OrderRecord['deliveryMethod'], string> = {
-  pickup: 'Retiro en el local',
-  delivery: 'Envío a domicilio',
-};
+import { createAdminClient } from './admin/api';
+import { InlineAlert, NoticeStack, useNotices } from './admin/notices';
+import { Spinner } from './admin/fields';
+import { ProductForm } from './admin/product-form';
+import { ProductList } from './admin/product-list';
+import { OrdersSection } from './admin/orders-section';
+import type { AdjustedItem } from './admin/order-adjust-editor';
+import { getArgentinaToday } from './admin/format';
+import { hasWeightItems, isOpenOrder } from './admin/orders-model';
 
 /**
- * Link de WhatsApp al cliente. Se guarda solo con dígitos; si no trae el 54 del
- * país se asume celular argentino (549 + número sin el 0 inicial).
+ * Panel del dueño (/trastienda/gestion).
+ *
+ * Este componente solo orquesta: sesión, carga de datos y las acciones que
+ * cambian el servidor. La interfaz de cada parte vive en src/components/admin/.
+ *
+ * Sesión: la cookie httpOnly viaja sola en cada fetch same-origin. Al montar se
+ * pregunta a /api/gestion/session si sigue vigente, y cualquier 401 posterior
+ * (vencida, revocada) manda al login desde el cliente de API.
  */
-function customerWhatsappUrl(phone: string) {
-  const digits = phone.replace(/\D/g, '');
-  const international = digits.startsWith('54') ? digits : `549${digits.replace(/^0/, '')}`;
-  return `https://wa.me/${international}`;
-}
 
-function getArgentinaToday() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Cordoba' }).format(new Date());
-}
+/** Cada cuánto se refrescan solos los pedidos (con la pestaña visible). */
+const ORDERS_POLL_MS = 60_000;
 
-function shiftDateParam(date: string, days: number) {
-  const [year, month, day] = date.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
-}
+type Tab = 'pedidos' | 'productos';
+const TABS: Tab[] = ['pedidos', 'productos'];
+type LoadStatus = 'loading' | 'ready' | 'error';
+type SessionState = { status: 'checking' } | { status: 'ok' } | { status: 'error'; error: string };
+/** null = formulario cerrado; product null = producto nuevo. */
+type FormTarget = { product: Product | null } | null;
 
-type ProductFormState = {
-  name: string;
-  price: string;
-  unit: 'kg' | 'g' | 'unidad';
-  image: string;
-  category: ProductCategory;
-};
-
-type CompressedImage = {
-  file: File;
-  previewUrl: string;
-};
-
-const EMPTY_FORM: ProductFormState = {
-  name: '',
-  price: '',
-  unit: 'kg',
-  image: '',
-  category: 'Verduras',
-};
-
-const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
-
-function compressImageFile(file: File): Promise<CompressedImage> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
-    reader.onload = () => {
-      const image = new Image();
-
-      image.onerror = () => reject(new Error('No se pudo cargar la imagen.'));
-      image.onload = () => {
-        const maxWidth = 1400;
-        const scale = Math.min(1, maxWidth / image.width);
-        const width = Math.max(1, Math.round(image.width * scale));
-        const height = Math.max(1, Math.round(image.height * scale));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext('2d');
-        if (!context) {
-          reject(new Error('No se pudo procesar la imagen.'));
-          return;
-        }
-
-        context.drawImage(image, 0, 0, width, height);
-
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error('No se pudo comprimir la imagen.'));
-              return;
-            }
-
-            const baseName = file.name.replace(/\.[^.]+$/, '') || 'product-image';
-            const compressedFile = new File([blob], `${baseName}.webp`, { type: 'image/webp' });
-            resolve({ file: compressedFile, previewUrl: URL.createObjectURL(compressedFile) });
-          },
-          'image/webp',
-          0.84,
-        );
-      };
-
-      image.src = typeof reader.result === 'string' ? reader.result : '';
-    };
-
-    reader.readAsDataURL(file);
-  });
+function upsertProduct(list: Product[], product: Product) {
+  return list.some((item) => item.id === product.id)
+    ? list.map((item) => (item.id === product.id ? product : item))
+    : [product, ...list];
 }
 
 export default function AdminPanelPage() {
   const router = useRouter();
+  const redirecting = useRef(false);
+  const goToLogin = useCallback(() => {
+    if (redirecting.current) return;
+    redirecting.current = true;
+    router.replace(ADMIN_ROUTES.login);
+  }, [router]);
+  const client = useMemo(() => createAdminClient(goToLogin), [goToLogin]);
+  const { notices, notify, dismiss } = useNotices();
+
+  const [session, setSession] = useState<SessionState>({ status: 'checking' });
+  const [tab, setTab] = useState<Tab>('pedidos');
+  const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsStatus, setProductsStatus] = useState<LoadStatus>('loading');
+  const [productsError, setProductsError] = useState('');
+  const [formTarget, setFormTarget] = useState<FormTarget>(null);
+  // Último pedido de disponibilidad por producto: si el dueño toca dos veces
+  // seguidas, la respuesta vieja que llegue tarde no pisa a la nueva.
+  const availabilitySeq = useRef(new Map<number, number>());
+
+  const [today, setToday] = useState(() => getArgentinaToday());
+  const [selectedDate, setSelectedDate] = useState(() => getArgentinaToday());
+  const selectedDateRef = useRef(selectedDate);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [editingProductId, setEditingProductId] = useState<number | null>(null);
-  const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
-  const [imageUploadLoading, setImageUploadLoading] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<'checking' | 'authorized'>('checking');
-  const [selectedDate, setSelectedDate] = useState<string>(() => getArgentinaToday());
-  const [productSearch, setProductSearch] = useState('');
-  const [productSort, setProductSort] = useState<ProductSort>('alpha');
-  const [showAllProducts, setShowAllProducts] = useState(false);
+  const [ordersStatus, setOrdersStatus] = useState<LoadStatus>('loading');
+  const [ordersError, setOrdersError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [busyOrderIds, setBusyOrderIds] = useState<ReadonlySet<number>>(() => new Set());
+  const ordersRequest = useRef(0);
+
+  /* ------------------------------------------------------------------------ */
+  /* Carga de datos                                                           */
+  /* ------------------------------------------------------------------------ */
+
+  const checkSession = useCallback(async () => {
+    setSession({ status: 'checking' });
+    const result = await client.get<{ ok: boolean }>(`${ADMIN_API}/session`, 'No se pudo verificar la sesión.');
+    if (result.ok) {
+      setSession({ status: 'ok' });
+    } else if (result.status !== 401) {
+      // 401 ya está yendo al login. Cualquier otra cosa (sin conexión, 429, 500)
+      // no significa que la sesión no valga: se ofrece reintentar.
+      setSession({ status: 'error', error: result.error });
+    }
+  }, [client]);
+
+  const loadOrders = useCallback(async (date: string) => {
+    ordersRequest.current += 1;
+    const requestId = ordersRequest.current;
+    setRefreshing(true);
+    const result = await client.get<OrderRecord[]>(
+      `${ADMIN_API}/orders?date=${encodeURIComponent(date)}`,
+      'No se pudieron cargar los pedidos.',
+    );
+    // Si mientras tanto se pidió otro día (o se refrescó de nuevo), esta
+    // respuesta ya no sirve: mostrarla pondría pedidos de otro día en pantalla.
+    if (requestId !== ordersRequest.current) return;
+    setRefreshing(false);
+
+    if (!result.ok) {
+      if (result.status === 401) return;
+      setOrdersError(result.error);
+      setOrdersStatus('error');
+      return;
+    }
+    setOrders(Array.isArray(result.data) ? result.data : []);
+    setOrdersStatus('ready');
+    setOrdersError('');
+    setLastUpdated(new Date());
+  }, [client]);
+
+  const loadProducts = useCallback(async () => {
+    setProductsStatus('loading');
+    const result = await client.get<Product[]>('/api/products', 'No se pudo cargar el catálogo.');
+    if (!result.ok) {
+      if (result.status === 401) return;
+      setProductsError(result.error);
+      setProductsStatus('error');
+      return;
+    }
+    setProducts(Array.isArray(result.data) ? result.data : []);
+    setProductsStatus('ready');
+    setProductsError('');
+  }, [client]);
+
+  const loadStoreInfo = useCallback(async () => {
+    const result = await client.get<StoreInfo>('/api/store-info', 'No se pudieron cargar los datos del local.');
+    if (result.ok) {
+      setStoreInfo(result.data);
+    } else if (result.status !== 401) {
+      notify('error', 'No se pudieron cargar los datos del local (alias, link de reseñas): los botones de WhatsApp aparecen cuando se cargan. Recargá la página.');
+    }
+  }, [client, notify]);
 
   useEffect(() => {
-    const token = localStorage.getItem('adminToken');
-    if (!token) {
-      router.replace(ADMIN_ROUTES.login);
+    // Antes la sesión era un token en localStorage. Ya no se usa: se borra el que
+    // haya quedado para que no ande dando vueltas en el navegador.
+    try {
+      window.localStorage.removeItem('adminToken');
+    } catch {
+      // Almacenamiento bloqueado (modo privado estricto): no hay nada que limpiar.
+    }
+    void checkSession();
+  }, [checkSession]);
+
+  useEffect(() => {
+    if (session.status !== 'ok') return;
+    void loadProducts();
+    void loadStoreInfo();
+    void loadOrders(selectedDateRef.current);
+  }, [session.status, loadProducts, loadStoreInfo, loadOrders]);
+
+  // Los pedidos entran solos durante el día: se refrescan cada minuto y al
+  // volver a la pestaña (por ejemplo, después de mandar un WhatsApp).
+  useEffect(() => {
+    if (session.status !== 'ok') return;
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      setToday(getArgentinaToday());
+      void loadOrders(selectedDateRef.current);
+    };
+    const interval = window.setInterval(refreshIfVisible, ORDERS_POLL_MS);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+    };
+  }, [session.status, loadOrders]);
+
+  function changeDate(date: string) {
+    selectedDateRef.current = date;
+    setSelectedDate(date);
+    setOrders([]);
+    setOrdersStatus('loading');
+    setLastUpdated(null);
+    void loadOrders(date);
+  }
+
+  function refreshOrders() {
+    setToday(getArgentinaToday());
+    void loadOrders(selectedDateRef.current);
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* Pedidos                                                                  */
+  /* ------------------------------------------------------------------------ */
+
+  function setOrderBusy(orderId: number, busy: boolean) {
+    setBusyOrderIds((current) => {
+      const next = new Set(current);
+      if (busy) next.add(orderId);
+      else next.delete(orderId);
+      return next;
+    });
+  }
+
+  function patchOrder(orderId: number, patch: Partial<OrderRecord>) {
+    setOrders((current) => current.map((order) => (order.id === orderId ? { ...order, ...patch } : order)));
+  }
+
+  async function changeOrderStatus(order: OrderRecord, action: 'confirm' | 'cancel') {
+    setOrderBusy(order.id, true);
+    const result = await client.send(
+      `${ADMIN_API}/orders/${order.id}/${action}`,
+      'PUT',
+      undefined,
+      action === 'confirm' ? 'No se pudo confirmar el pago.' : 'No se pudo cancelar el pedido.',
+    );
+    setOrderBusy(order.id, false);
+
+    if (!result.ok) {
+      if (result.status === 401) return;
+      notify('error', `Pedido #${order.id}: ${result.error}`);
+      // 409/404: el pedido cambió o ya no existe; se recarga para ver cómo quedó.
+      if (result.status === 409 || result.status === 404) void loadOrders(selectedDateRef.current);
       return;
     }
 
-    void refreshData(token);
-  }, [router]);
-
-  async function getAuthHeaders() {
-    const token = localStorage.getItem('adminToken');
-    return {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    };
+    patchOrder(order.id, { status: action === 'confirm' ? 'paid' : 'cancelled' });
+    notify('success', action === 'confirm' ? `Pedido #${order.id} marcado como pagado.` : `Pedido #${order.id} cancelado.`);
+    void loadOrders(selectedDateRef.current);
   }
 
-  async function handleAuthError(response: Response) {
-    if (response.status === 401) {
-      localStorage.removeItem('adminToken');
-      router.replace(ADMIN_ROUTES.login);
-      return true;
+  function handleConfirmOrder(order: OrderRecord) {
+    const question = order.paymentMethod === 'cash'
+      ? `¿Ya cobraste en efectivo el pedido #${order.id} (${formatArs(order.total)})?`
+      : `¿Llegó la transferencia del pedido #${order.id} (${formatArs(order.total)})?`;
+    const warning = !order.adjustedAt && hasWeightItems(order)
+      ? '\n\nOjo: todavía no cargaste los pesos reales, ese total es estimado.'
+      : '';
+    if (!window.confirm(question + warning)) return;
+    void changeOrderStatus(order, 'confirm');
+  }
+
+  function handleCancelOrder(order: OrderRecord) {
+    const who = order.customerName?.trim() ? ` de ${order.customerName.trim()}` : '';
+    if (!window.confirm(`¿Cancelar el pedido #${order.id}${who}?`)) return;
+    void changeOrderStatus(order, 'cancel');
+  }
+
+  async function handleDeleteOrder(order: OrderRecord) {
+    if (!window.confirm(`¿Eliminar el pedido #${order.id}? Esta acción no se puede deshacer.`)) return;
+    setOrderBusy(order.id, true);
+    const result = await client.send(`${ADMIN_API}/orders/${order.id}`, 'DELETE', undefined, 'No se pudo eliminar el pedido.');
+    setOrderBusy(order.id, false);
+
+    // 404 = ya lo había borrado otra pestaña: el resultado es el mismo.
+    if (!result.ok && result.status !== 404) {
+      if (result.status !== 401) notify('error', `Pedido #${order.id}: ${result.error}`);
+      return;
     }
-    return false;
+    setOrders((current) => current.filter((item) => item.id !== order.id));
+    notify('success', `Pedido #${order.id} eliminado.`);
   }
 
-  async function refreshData(token?: string, dateOverride?: string) {
-    const headers = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token ?? localStorage.getItem('adminToken')}`,
-    };
-    const date = dateOverride ?? selectedDate;
-
-    try {
-      const [productsResponse, ordersResponse] = await Promise.all([
-        fetch('/api/products'),
-        fetch(`${ADMIN_API}/orders?date=${date}`, { headers }),
-      ]);
-
-      if (await handleAuthError(ordersResponse)) return;
-
-      if (productsResponse.ok) setProducts(await productsResponse.json());
-      if (ordersResponse.ok) setOrders(await ordersResponse.json());
-      setAuthStatus('authorized');
-    } catch (error) {
-      console.error('Error loading admin data:', error);
+  async function handleAdjustOrder(order: OrderRecord, items: AdjustedItem[]): Promise<string | null> {
+    const result = await client.send<OrderRecord>(`${ADMIN_API}/orders/${order.id}`, 'PUT', { items }, 'No se pudo guardar el ajuste.');
+    if (!result.ok) {
+      if (result.status === 409 || result.status === 404) void loadOrders(selectedDateRef.current);
+      return result.error;
     }
+    setOrders((current) => current.map((item) => (item.id === order.id ? result.data : item)));
+    notify('success', `Pedido #${order.id} ajustado. Total final: ${formatArs(result.data.total)}. Ya le podés avisar al cliente.`);
+    void loadOrders(selectedDateRef.current);
+    return null;
   }
 
-  function goToDate(nextDate: string) {
-    setSelectedDate(nextDate);
-    void refreshData(undefined, nextDate);
+  /* ------------------------------------------------------------------------ */
+  /* Productos                                                                */
+  /* ------------------------------------------------------------------------ */
+
+  function openNewProduct() {
+    setFormTarget({ product: null });
   }
 
-  function resetForm() {
-    setForm(EMPTY_FORM);
-    setEditingProductId(null);
-    setImagePreview(null);
+  function handleProductSaved(product: Product, mode: 'created' | 'updated') {
+    setProducts((current) => upsertProduct(current, product));
+    setFormTarget(null);
+    notify('success', mode === 'created' ? `${product.name} se agregó al catálogo.` : `${product.name} se actualizó.`);
   }
 
-  function handleEdit(productId: number) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-
-    setForm({
-      name: product.name,
-      price: String(product.price),
-      unit: product.unit,
-      image: product.image,
-      category: product.category,
-    });
-    setImagePreview(product.image || null);
-    setEditingProductId(productId);
-    window.scrollTo(0, 0);
+  function handleProductUpdated(product: Product, message: string) {
+    setProducts((current) => upsertProduct(current, product));
+    notify('success', message);
   }
 
-  async function handleImageSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setImageUploadLoading(true);
-      const compressed = await compressImageFile(file);
-      setImagePreview(compressed.previewUrl);
-      setForm((current) => ({ ...current, image: compressed.file.name }));
-
-      const formData = new FormData();
-      formData.append('file', compressed.file);
-
-      const response = await fetch(`${ADMIN_API}/upload-product-image`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
-        },
-        body: formData,
-      });
-
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        alert(result.error || 'No se pudo subir la imagen.');
-        setForm((current) => ({ ...current, image: '' }));
-        return;
-      }
-
-      setForm((current) => ({ ...current, image: result.url }));
-    } catch (error) {
-      console.error('Error al subir imagen:', error);
-      alert('No se pudo procesar la imagen.');
-    } finally {
-      setImageUploadLoading(false);
+  async function handleDeleteProduct(product: Product) {
+    if (!window.confirm(`¿Eliminar "${product.name}" del catálogo? Los pedidos que ya lo tienen no se tocan.`)) return;
+    const result = await client.send(`${ADMIN_API}/products/${product.id}`, 'DELETE', undefined, 'No se pudo eliminar el producto.');
+    if (!result.ok && result.status !== 404) {
+      if (result.status !== 401) notify('error', `${product.name}: ${result.error}`);
+      return;
     }
+    setProducts((current) => current.filter((item) => item.id !== product.id));
+    setFormTarget((current) => (current?.product?.id === product.id ? null : current));
+    notify('success', `${product.name} se eliminó del catálogo.`);
   }
 
-  async function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleToggleAvailability(product: Product) {
+    const nextAvailable = !product.available;
+    const seq = (availabilitySeq.current.get(product.id) ?? 0) + 1;
+    availabilitySeq.current.set(product.id, seq);
+
+    // Se cambia en pantalla al toque y se revierte si el servidor rechaza: el
+    // dueño aprieta esto varias veces seguidas y esperar el ida y vuelta molesta.
+    setProducts((current) => current.map((item) => (item.id === product.id ? { ...item, available: nextAvailable } : item)));
+
+    const result = await client.send<Product>(
+      `${ADMIN_API}/products/${product.id}/availability`,
+      'PUT',
+      { available: nextAvailable },
+      'No se pudo cambiar la disponibilidad.',
+    );
+    if (availabilitySeq.current.get(product.id) !== seq) return;
+
+    if (!result.ok) {
+      setProducts((current) => current.map((item) => (item.id === product.id ? { ...item, available: product.available } : item)));
+      if (result.status !== 401) notify('error', `${product.name}: ${result.error}`);
+      return;
+    }
+    setProducts((current) => upsertProduct(current, result.data));
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* Sesión y navegación                                                      */
+  /* ------------------------------------------------------------------------ */
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    const result = await client.send(`${ADMIN_API}/logout`, 'POST', undefined, 'No se pudo cerrar la sesión.');
+    if (!result.ok) {
+      setLoggingOut(false);
+      notify('error', result.error);
+      return;
+    }
+    redirecting.current = true;
+    router.replace(ADMIN_ROUTES.login);
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     event.preventDefault();
-
-    const payload = {
-      name: form.name,
-      price: Number(form.price),
-      unit: form.unit,
-      image: form.image,
-      category: form.category,
-    };
-
-    const isEditing = editingProductId !== null;
-    const url = isEditing ? `${ADMIN_API}/products/${editingProductId}` : `${ADMIN_API}/products`;
-    const method = isEditing ? 'PUT' : 'POST';
-
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: await getAuthHeaders(),
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (await handleAuthError(response)) return;
-      if (!response.ok) {
-        alert(data.error || 'La operación en el servidor falló.');
-        return;
-      }
-
-      resetForm();
-      await refreshData();
-      alert(isEditing ? 'Producto actualizado correctamente.' : 'Producto agregado correctamente.');
-    } catch (error) {
-      console.error('Error al guardar producto:', error);
-      alert('No se pudo guardar el producto. Revisá la consola.');
-    }
+    const index = TABS.indexOf(tab);
+    const next = TABS[(index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length];
+    setTab(next);
+    document.getElementById(`adm-tab-${next}`)?.focus();
   }
 
-  async function handleDelete(productId: number) {
-    if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+  const storeName = storeInfo?.storeName ?? 'El Pampa';
+  const openOrdersCount = orders.filter(isOpenOrder).length;
 
-    try {
-      const response = await fetch(`${ADMIN_API}/products/${productId}`, {
-        method: 'DELETE',
-        headers: await getAuthHeaders(),
-      });
-
-      if (await handleAuthError(response)) return;
-      await refreshData();
-    } catch (error) {
-      console.error('Error al eliminar:', error);
-      alert('No se pudo eliminar el producto.');
-    }
-  }
-
-  async function handleToggleAvailability(productId: number, nextAvailable: boolean) {
-    // Se actualiza en pantalla al toque y se revierte si el servidor rechaza:
-    // el dueño aprieta esto varias veces seguidas y esperar el ida y vuelta molesta.
-    setProducts((current) => current.map((item) => (
-      item.id === productId ? { ...item, available: nextAvailable } : item
-    )));
-
-    try {
-      const response = await fetch(`${ADMIN_API}/products/${productId}/availability`, {
-        method: 'PUT',
-        headers: await getAuthHeaders(),
-        body: JSON.stringify({ available: nextAvailable }),
-      });
-
-      if (await handleAuthError(response)) return;
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        alert(data.error || 'No se pudo cambiar la disponibilidad.');
-        await refreshData();
-        return;
-      }
-
-      await refreshData();
-    } catch (error) {
-      console.error('Error al cambiar disponibilidad:', error);
-      alert('No se pudo cambiar la disponibilidad.');
-      await refreshData();
-    }
-  }
-
-  async function handleConfirmOrder(orderId: number) {
-    if (!confirm('¿Confirmás que llegó el pago de este pedido?')) return;
-
-    try {
-      const response = await fetch(`${ADMIN_API}/orders/${orderId}/confirm`, {
-        method: 'PUT',
-        headers: await getAuthHeaders(),
-      });
-
-      if (await handleAuthError(response)) return;
-      const result = await response.json();
-      if (!response.ok) {
-        alert(result.error || 'No se pudo confirmar el pedido.');
-        return;
-      }
-
-      await refreshData();
-    } catch (error) {
-      console.error('Error al confirmar pedido:', error);
-      alert('No se pudo confirmar el pedido.');
-    }
-  }
-
-  async function handleCancelOrder(orderId: number) {
-    if (!confirm('¿Cancelar este pedido?')) return;
-
-    try {
-      const response = await fetch(`${ADMIN_API}/orders/${orderId}/cancel`, {
-        method: 'PUT',
-        headers: await getAuthHeaders(),
-      });
-
-      if (await handleAuthError(response)) return;
-      if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        alert(result.error || 'No se pudo cancelar el pedido.');
-      }
-      await refreshData();
-    } catch (error) {
-      console.error('Error al cancelar pedido:', error);
-      alert('No se pudo cancelar el pedido.');
-    }
-  }
-
-  async function handleDeleteOrder(orderId: number) {
-    if (!confirm('¿Eliminar este pedido? Esta acción no se puede deshacer.')) return;
-
-    try {
-      const response = await fetch(`${ADMIN_API}/orders/${orderId}`, {
-        method: 'DELETE',
-        headers: await getAuthHeaders(),
-      });
-
-      if (await handleAuthError(response)) return;
-      await refreshData();
-    } catch (error) {
-      console.error('Error al eliminar pedido:', error);
-      alert('No se pudo eliminar el pedido.');
-    }
-  }
-
-  function handleLogout() {
-    localStorage.removeItem('adminToken');
-    router.push(ADMIN_ROUTES.login);
-  }
-
-  const sortedFilteredProducts = useMemo(() => {
-    const filtered = productSearch.trim()
-      ? products.filter((product) => matchesSearch(product.name, productSearch))
-      : products;
-
-    const sorted = [...filtered];
-    if (productSort === 'alpha') {
-      sorted.sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    } else if (productSort === 'newest') {
-      sorted.sort((a, b) => b.id - a.id);
-    } else {
-      sorted.sort((a, b) => a.id - b.id);
-    }
-    return sorted;
-  }, [products, productSearch, productSort]);
-
-  // Resumen del día para el dueño: cuánto entró y cuánto falta cobrar.
-  const ordersSummary = useMemo(() => {
-    const paid = orders.filter((order) => order.status === 'paid');
-    const pending = orders.filter((order) => order.status === 'pending' || order.status === 'failed');
-    return {
-      paidCount: paid.length,
-      paidTotal: paid.reduce((sum, order) => sum + order.total, 0),
-      pendingCount: pending.length,
-      pendingTotal: pending.reduce((sum, order) => sum + order.total, 0),
-    };
-  }, [orders]);
-
-  const isSearchingProducts = productSearch.trim().length > 0;
-  const visibleProducts = isSearchingProducts || showAllProducts
-    ? sortedFilteredProducts
-    : sortedFilteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
-  const hasMoreProducts = !isSearchingProducts && !showAllProducts && sortedFilteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
-
-  if (authStatus === 'checking') {
+  if (session.status !== 'ok') {
     return (
-      <main className="admin-page">
-        <div className="panel-shell">
-          <p style={{ textAlign: 'center', color: '#6c7a6a' }}>Verificando sesión...</p>
+      <main className="adm-page adm-page--center">
+        <div className="adm-card adm-card--narrow">
+          {session.status === 'checking' ? (
+            <p className="adm-empty"><Spinner /> Verificando sesión…</p>
+          ) : (
+            <InlineAlert
+              action={(
+                <button type="button" className="adm-btn adm-btn--secondary adm-btn--small" onClick={() => void checkSession()}>
+                  <RefreshCw size={16} aria-hidden="true" /> Reintentar
+                </button>
+              )}
+            >
+              {session.error}
+            </InlineAlert>
+          )}
         </div>
+        <NoticeStack notices={notices} onDismiss={dismiss} />
       </main>
     );
   }
 
   return (
-    <main className="admin-page">
-      <div className="panel-shell">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <h1>Panel de Administración</h1>
-          <button id="logout-btn" style={{ backgroundColor: '#7f8c8d', color: 'white' }} onClick={handleLogout}>Cerrar sesión</button>
+    <div className="adm-page">
+      <header className="adm-topbar">
+        <div className="adm-topbar__inner">
+          <h1 className="adm-topbar__title">
+            <span className="adm-brand">{storeName}</span>
+            <span className="adm-topbar__subtitle">Gestión</span>
+          </h1>
+          <button type="button" className="adm-btn adm-btn--on-dark adm-btn--small" onClick={() => void handleLogout()} disabled={loggingOut}>
+            {loggingOut ? <Spinner size={16} /> : <LogOut size={16} aria-hidden="true" />} Cerrar sesión
+          </button>
+        </div>
+        <div className="adm-tabs" role="tablist" aria-label="Secciones del panel">
+          <button
+            type="button"
+            role="tab"
+            id="adm-tab-pedidos"
+            className="adm-tab"
+            aria-selected={tab === 'pedidos'}
+            aria-controls="adm-panel-pedidos"
+            tabIndex={tab === 'pedidos' ? 0 : -1}
+            onClick={() => setTab('pedidos')}
+            onKeyDown={handleTabKeyDown}
+          >
+            <ClipboardList size={18} aria-hidden="true" /> Pedidos
+            {openOrdersCount ? <span className="adm-count" aria-label={`${openOrdersCount} sin cobrar`}>{openOrdersCount}</span> : null}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="adm-tab-productos"
+            className="adm-tab"
+            aria-selected={tab === 'productos'}
+            aria-controls="adm-panel-productos"
+            tabIndex={tab === 'productos' ? 0 : -1}
+            onClick={() => setTab('productos')}
+            onKeyDown={handleTabKeyDown}
+          >
+            <Package size={18} aria-hidden="true" /> Productos
+          </button>
+        </div>
+      </header>
+
+      <main className="adm-shell">
+        {/* Los dos paneles quedan montados (hidden): cambiar de pestaña no pierde
+            un formulario a medio cargar ni un ajuste de pesos sin guardar. */}
+        <div role="tabpanel" id="adm-panel-pedidos" aria-labelledby="adm-tab-pedidos" hidden={tab !== 'pedidos'}>
+          <OrdersSection
+            orders={orders}
+            status={ordersStatus}
+            error={ordersError}
+            selectedDate={selectedDate}
+            today={today}
+            refreshing={refreshing}
+            lastUpdated={lastUpdated}
+            storeInfo={storeInfo}
+            busyOrderIds={busyOrderIds}
+            onChangeDate={changeDate}
+            onRefresh={refreshOrders}
+            onConfirm={handleConfirmOrder}
+            onCancel={handleCancelOrder}
+            onDelete={(order) => void handleDeleteOrder(order)}
+            onAdjust={handleAdjustOrder}
+          />
         </div>
 
-        <div className="form-container">
-          <h2>{editingProductId ? 'Editar Producto' : 'Agregar Nuevo Producto'}</h2>
-          <form onSubmit={handleFormSubmit}>
-            <div className="form-group">
-              <label htmlFor="product-name">Nombre del Producto:</label>
-              <input id="product-name" type="text" required value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label htmlFor="product-price">Precio:</label>
-              <input id="product-price" type="number" step="0.01" required value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label htmlFor="product-unit">Unidad de venta:</label>
-              <select id="product-unit" required value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value as ProductFormState['unit'] }))}>
-                <option value="kg">Kilo</option>
-                <option value="g">Gramo</option>
-                <option value="unidad">Unidad</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="product-category">Categoría:</label>
-              <select id="product-category" required value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value as ProductCategory }))}>
-                {PRODUCT_CATEGORIES.map((category) => (
-                  <option key={category} value={category}>{category}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="product-image">URL de la Imagen (opcional):</label>
-              <input id="product-image" type="url" value={form.image} onChange={(event) => setForm((current) => ({ ...current, image: event.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label htmlFor="product-image-file">O subir imagen (opcional):</label>
-              <input id="product-image-file" type="file" accept="image/*" onChange={handleImageSelect} />
-              <p style={{ margin: '8px 0 0', color: '#6c7a6a', fontSize: '0.92rem' }}>
-                Se comprime en el navegador y se sube como WebP para ahorrar almacenamiento.
-              </p>
-              <p style={{ margin: '6px 0 0', color: '#6c7a6a', fontSize: '0.85rem' }}>
-                {imageUploadLoading ? 'Procesando imagen...' : form.image ? 'Imagen lista para guardar.' : 'Si no cargás una imagen, se muestra una imagen genérica.'}
-              </p>
-              {imagePreview ? (
-                <img
-                  src={imagePreview}
-                  alt="Vista previa"
-                  style={{ width: '100%', maxWidth: 260, marginTop: 12, borderRadius: 8, border: '1px solid #ddd4bb' }}
-                />
+        <div role="tabpanel" id="adm-panel-productos" aria-labelledby="adm-tab-productos" hidden={tab !== 'productos'}>
+          <section className="adm-section" aria-labelledby="adm-products-title">
+            <div className="adm-section__head adm-section__head--row">
+              <div>
+                <h2 id="adm-products-title">Productos</h2>
+                <p className="adm-section__lead">
+                  Cuando se termina algo, tocá &quot;Sin stock&quot;: deja de poder pedirse al instante.
+                </p>
+              </div>
+              {formTarget === null ? (
+                <button type="button" className="adm-btn adm-btn--primary" onClick={openNewProduct}>
+                  <Plus size={18} aria-hidden="true" /> Nuevo producto
+                </button>
               ) : null}
             </div>
-            <div className="form-buttons">
-              <button type="submit" id="save-btn">{editingProductId ? 'Actualizar Producto' : 'Guardar Producto'}</button>
-              {editingProductId ? <button type="button" id="cancel-edit-btn" onClick={resetForm}>Cancelar Edición</button> : null}
-            </div>
-          </form>
+
+            {formTarget !== null ? (
+              <ProductForm
+                key={formTarget.product?.id ?? 'nuevo'}
+                product={formTarget.product}
+                client={client}
+                onSaved={handleProductSaved}
+                onCancel={() => setFormTarget(null)}
+              />
+            ) : null}
+
+            <ProductList
+              products={products}
+              status={productsStatus}
+              error={productsError}
+              onRetry={() => void loadProducts()}
+              client={client}
+              editingProductId={formTarget?.product?.id ?? null}
+              onEdit={(product) => setFormTarget({ product })}
+              onDelete={(product) => void handleDeleteProduct(product)}
+              onToggleAvailability={(product) => void handleToggleAvailability(product)}
+              onProductUpdated={handleProductUpdated}
+            />
+          </section>
         </div>
+      </main>
 
-        <hr />
-
-        <h2>Productos Existentes</h2>
-
-        <div className="search-bar">
-          <i className="fa-solid fa-magnifying-glass" />
-          <input
-            type="search"
-            placeholder="Buscar productos..."
-            value={productSearch}
-            onChange={(event) => setProductSearch(event.target.value)}
-            aria-label="Buscar productos"
-          />
-        </div>
-
-        <div className="form-group" style={{ maxWidth: 260 }}>
-          <label htmlFor="product-sort">Ordenar por:</label>
-          <select id="product-sort" value={productSort} onChange={(event) => setProductSort(event.target.value as ProductSort)}>
-            <option value="alpha">Nombre (A-Z)</option>
-            <option value="newest">Más reciente primero</option>
-            <option value="oldest">Más antiguo primero</option>
-          </select>
-        </div>
-
-        {isSearchingProducts && sortedFilteredProducts.length === 0 ? (
-          <p className="no-results">No encontramos productos con &quot;{productSearch}&quot;.</p>
-        ) : (
-          <div>
-            {visibleProducts.map((product) => (
-              <div className={`product-item ${product.available ? '' : 'product-item-unavailable'}`} key={product.id}>
-                <div className="product-item-info">
-                  <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                  <div>
-                    <strong>{product.name}</strong> <span className="category-tag">{product.category}</span>
-                    {product.available ? null : <span className="sin-stock-tag">Sin stock</span>}
-                    <br />
-                    {formatArs(product.price)} / {PRODUCT_UNIT_LABELS[product.unit]}
-                  </div>
-                </div>
-                <div className="product-item-actions">
-                  <button
-                    className={`availability-btn ${product.available ? 'is-available' : 'is-unavailable'}`}
-                    type="button"
-                    onClick={() => handleToggleAvailability(product.id, !product.available)}
-                    title={product.available ? 'Marcar como sin stock' : 'Volver a poner disponible'}
-                  >
-                    {product.available ? 'Marcar sin stock' : 'Marcar disponible'}
-                  </button>
-                  <button className="edit-btn" type="button" onClick={() => handleEdit(product.id)}>Editar</button>
-                  <button className="delete-btn" type="button" onClick={() => handleDelete(product.id)}>Eliminar</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {hasMoreProducts ? (
-          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
-            Ver todos los productos ({sortedFilteredProducts.length})
-          </button>
-        ) : null}
-
-        {!isSearchingProducts && showAllProducts && sortedFilteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
-          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
-            Ver menos
-          </button>
-        ) : null}
-
-        <hr />
-
-        <h2>Pedidos</h2>
-        <p style={{ color: '#6c7a6a', marginTop: '-10px' }}>Confirmá un pedido recién cuando veas el comprobante de transferencia. Los pagos con Mercado Pago se marcan solos.</p>
-
-        <div className="order-date-nav">
-          <button type="button" onClick={() => goToDate(shiftDateParam(selectedDate, -1))}>◀ Día anterior</button>
-          <input
-            type="date"
-            value={selectedDate}
-            max={getArgentinaToday()}
-            onChange={(event) => event.target.value && goToDate(event.target.value)}
-          />
-          <button type="button" disabled={selectedDate >= getArgentinaToday()} onClick={() => goToDate(shiftDateParam(selectedDate, 1))}>Día siguiente ▶</button>
-        </div>
-
-        {orders.length > 0 ? (
-          <div className="orders-summary">
-            <div>Cobrado<strong>{formatArs(ordersSummary.paidTotal)}</strong>{ordersSummary.paidCount} pedido(s)</div>
-            <div>Por cobrar<strong>{formatArs(ordersSummary.pendingTotal)}</strong>{ordersSummary.pendingCount} pedido(s)</div>
-          </div>
-        ) : null}
-
-        <div>
-          {orders.length === 0 ? <p>No hay pedidos para el {selectedDate}.</p> : null}
-          {orders.map((order) => {
-            const itemsHtml = order.items.map((item) => (
-              <li key={`${order.id}-${item.id}`}>{formatProductQuantity(item.quantity, item.unit)} de {item.name} — {formatArs(item.price * item.quantity)}</li>
-            ));
-            const statusClass = order.status === 'paid' ? 'paid' : order.status === 'pending' ? 'pending' : order.status === 'failed' ? 'failed' : 'cancelled';
-            const canResolve = order.status === 'pending' || order.status === 'failed';
-            const createdAt = order.createdAt
-              ? new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/Cordoba', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(order.createdAt))
-              : null;
-
-            return (
-              <div className="order-item" key={order.id}>
-                <div style={{ width: '100%' }}>
-                  <div className="order-header">
-                    <strong>Pedido #{order.id}{createdAt ? ` · ${createdAt} h` : ''}</strong>
-                    <span className={`order-status ${statusClass}`}>{ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
-                  </div>
-                  {order.customerName || order.customerPhone ? (
-                    <div className="order-customer">
-                      {order.customerName ? <p><strong>{order.customerName}</strong></p> : null}
-                      {order.customerPhone ? (
-                        <p>
-                          <i className="fa-brands fa-whatsapp" />{' '}
-                          <a href={customerWhatsappUrl(order.customerPhone)} target="_blank" rel="noopener noreferrer">{order.customerPhone}</a>
-                        </p>
-                      ) : null}
-                      {order.customerAddress ? <p><i className="fa-solid fa-location-dot" /> {order.customerAddress}</p> : null}
-                      {order.replacementPolicy && isReplacementPolicy(order.replacementPolicy) ? (
-                        <p>Si falta algo: {REPLACEMENT_POLICY_LABELS[order.replacementPolicy]}</p>
-                      ) : null}
-                      {order.notes ? <p>Aclaraciones: {order.notes}</p> : null}
-                    </div>
-                  ) : null}
-                  <ul className="order-items-list">{itemsHtml}</ul>
-                  <div><strong>Total: {formatArs(order.total)}</strong></div>
-                  <p className="order-delivery">
-                    {DELIVERY_METHOD_LABELS[order.deliveryMethod]}
-                    {order.mpPaymentId ? ' · Mercado Pago' : ''}
-                  </p>
-                  <div className="order-actions">
-                    {canResolve ? (
-                      <>
-                        <button className="confirm-order-btn" type="button" onClick={() => handleConfirmOrder(order.id)}>Confirmar pago</button>
-                        <button className="cancel-order-btn" type="button" onClick={() => handleCancelOrder(order.id)}>Cancelar</button>
-                      </>
-                    ) : null}
-                    <button className="delete-btn" type="button" onClick={() => handleDeleteOrder(order.id)}>Eliminar</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </main>
+      <NoticeStack notices={notices} onDismiss={dismiss} />
+    </div>
   );
 }
