@@ -160,10 +160,31 @@ describe('verifyAdminAuth', () => {
     expect(verifyAdminAuth(withToken('basura')).ok).toBe(false);
   });
 
-  it('sin JWT_SECRET en el servidor: 401, no 500', async () => {
+  it('sin JWT_SECRET o con el de ejemplo: 500 de configuración (falla cerrado, no es un token inválido)', async () => {
     const token = createAdminToken();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubEnv('JWT_SECRET', '');
-    expect(await errorMessage(verifyAdminAuth(withToken(token)))).toBe('Sesión vencida. Volvé a iniciar sesión.');
+    const missing = verifyAdminAuth(withToken(token));
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.response.status).toBe(500);
+      expect(((await missing.response.json()) as { error: string }).error).toBe('El panel no está configurado.');
+    }
+
+    vi.stubEnv('JWT_SECRET', 'cambiar-por-un-texto-largo-y-random');
+    const example = verifyAdminAuth(withToken(token));
+    expect(example.ok).toBe(false);
+    if (!example.ok) expect(example.response.status).toBe(500);
+  });
+
+  it('un token sin exp firmado con el secreto real igual vence a las 12 h (maxAge)', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-05T12:00:00Z'));
+    const noExp = jwt.sign({ role: 'admin', v: '1' }, SECRET, { algorithm: 'HS256', issuer: 'el-pampa' });
+    expect(verifyAdminAuth(withToken(noExp)).ok).toBe(true);
+    vi.setSystemTime(new Date('2026-10-06T00:00:01Z'));
+    expect(verifyAdminAuth(withToken(noExp)).ok).toBe(false);
+    vi.useRealTimers();
   });
 });
 

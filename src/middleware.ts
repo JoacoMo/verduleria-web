@@ -29,10 +29,14 @@ function getAllowedOrigins(request: NextRequest) {
   origins.add(request.nextUrl.origin);
 
   // Detrás del proxy de Vercel, nextUrl puede no reflejar el host público.
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https';
-  if (forwardedHost) {
-    origins.add(`${forwardedProto}://${forwardedHost}`);
+  // x-forwarded-host solo es confiable ahí (Vercel lo pisa con el host real): en
+  // cualquier otro lado lo manda el cliente y no puede ampliar la lista de
+  // orígenes permitidos. SITE_URL y las URLs de Vercel ya cubren los dominios propios.
+  if (process.env.VERCEL === '1') {
+    const forwardedHost = request.headers.get('x-forwarded-host');
+    if (forwardedHost) {
+      origins.add(`https://${forwardedHost}`);
+    }
   }
 
   const siteUrl = process.env.SITE_URL || 'https://elpampa.vercel.app';

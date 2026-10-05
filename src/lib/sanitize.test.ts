@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeId, sanitizeNumber, sanitizeText } from './sanitize';
+import { sanitizeId, sanitizeNumber, sanitizeText, MAX_DB_INT } from './sanitize';
 
 const code = (n: number) => String.fromCharCode(n);
 
@@ -46,14 +46,20 @@ describe('sanitizeText', () => {
     expect(sanitizeText(`${code(0x200b).repeat(50)}abc`, { maxLength: 3 })).toBe('abc');
   });
 
-  // BUG (severidad baja/media): el corte por largo usa slice() sobre unidades
-  // UTF-16. Si en el borde cae un emoji (dos unidades), queda un "surrogate"
-  // suelto: un string mal formado que después se guarda en la base y se manda
-  // en el mensaje de WhatsApp como "�". Ver el test de integración del checkout
-  // con notas de 500 caracteres.
-  it.fails('BUG: cortar en medio de un emoji deja un surrogate suelto', () => {
+  // Era un bug: el corte por largo usaba slice() sobre unidades UTF-16 y dejaba
+  // medio emoji suelto; Prisma no lo puede guardar y el checkout daba 500.
+  it('cortar en medio de un emoji no deja un surrogate suelto', () => {
     const result = sanitizeText(`${'a'.repeat(9)}🍅`, { maxLength: 10 }) ?? '';
     expect(result.isWellFormed()).toBe(true);
+    expect(result).toBe('a'.repeat(9));
+  });
+
+  it('saca surrogates sueltos que vengan en el JSON y deja los emojis enteros', () => {
+    expect(sanitizeText('hola \ud83d chau 🍅', { maxLength: 50 })).toBe('hola  chau 🍅');
+  });
+
+  it('saca aislamientos bidi (Trojan Source), rellenos Hangul, soft hyphen y tags Unicode', () => {
+    expect(sanitizeText(`${code(0x2066)}a${code(0x2069)}${code(0x3164)}b${code(0xad)}c\u{E0041}`, { maxLength: 50 })).toBe('abc');
   });
 });
 
@@ -85,11 +91,14 @@ describe('sanitizeNumber', () => {
     expect(sanitizeNumber('12.3', { ...range, decimals: 0 })).toBe(12);
   });
 
-  it('comportamiento heredado de Number(): notación científica y hexadecimal se aceptan', () => {
-    // No es un riesgo (el rango igual se aplica), pero conviene saberlo: "0x10"
-    // como precio se guarda como 16.
-    expect(sanitizeNumber('1e2', range)).toBe(100);
-    expect(sanitizeNumber('0x10', range)).toBe(16);
+  it('en strings solo decimales comunes: nada de hexadecimal, binario ni exponentes', () => {
+    // Number() los aceptaba: "0x10" como precio se guardaba como 16 sin dar error.
+    for (const value of ['1e2', '0x10', '0b11', '0o7', 'Infinity', '1_000']) {
+      expect(sanitizeNumber(value, range), value).toBeNull();
+    }
+    // Un número JSON 1e2 sigue entrando: es el número 100.
+    expect(sanitizeNumber(1e2, range)).toBe(100);
+    expect(sanitizeNumber(' .5 ', range)).toBe(0.5);
   });
 });
 
@@ -97,7 +106,13 @@ describe('sanitizeId', () => {
   it('enteros positivos, también como string', () => {
     expect(sanitizeId(1)).toBe(1);
     expect(sanitizeId('42')).toBe(42);
-    expect(sanitizeId(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(sanitizeId(MAX_DB_INT)).toBe(MAX_DB_INT);
+  });
+
+  it('fuera del rango de un Int de Postgres → null (antes daba 500 en Prisma)', () => {
+    expect(sanitizeId(MAX_DB_INT + 1)).toBeNull();
+    expect(sanitizeId('3000000000')).toBeNull();
+    expect(sanitizeId(Number.MAX_SAFE_INTEGER)).toBeNull();
   });
 
   it('cero, negativos, decimales, no numéricos y vacíos → null', () => {
@@ -106,11 +121,11 @@ describe('sanitizeId', () => {
     }
   });
 
-  // BUG (severidad baja): Number() convierte true → 1 y [5] → 5, así que un
-  // body como {"id": true} o {"id": [5]} se toma como el producto 1 o 5 (bulk,
-  // ajuste de pedidos). Un id tendría que ser número o string de dígitos.
-  it.fails('BUG: acepta booleanos y arrays como id (true → 1, [5] → 5)', () => {
-    expect(sanitizeId(true)).toBeNull();
-    expect(sanitizeId([5])).toBeNull();
+  // Era un bug: Number() convertía true → 1 y [5] → 5, y {"id": true} pegaba en
+  // el producto 1. Ahora un id es un número o un string de dígitos.
+  it('rechaza booleanos, arrays y strings con hexadecimal o exponente', () => {
+    for (const value of [true, false, [5], '0x16', '1e1', '+5']) {
+      expect(sanitizeId(value), String(value)).toBeNull();
+    }
   });
 });

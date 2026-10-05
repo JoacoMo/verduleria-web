@@ -497,13 +497,9 @@ describeDb('POST /api/checkout: textos largos', () => {
     expect((await prisma.order.findUniqueOrThrow({ where: { id: data.orderId } })).notes).toHaveLength(500);
   });
 
-  // BUG (severidad media): sanitizeText corta con slice() sobre unidades UTF-16.
-  // Si un emoji cae justo en el borde (500 en notas, 200 en dirección, 80 en
-  // nombre) queda un surrogate suelto y Prisma rechaza el create con
-  // "InvalidArg: unexpected end of hex escape": el checkout responde 500 "No se
-  // pudo registrar el pedido" y el cliente NO puede pedir (reintentar da lo
-  // mismo). Lo esperable es cortar sin partir el emoji y crear el pedido.
-  it.fails('BUG: notas de 500+ caracteres con un emoji en el borde del corte → 500', async () => {
+  // Era un bug: el corte partía el emoji, Prisma rechazaba el surrogate suelto y
+  // el checkout daba 500 (y reintentar daba lo mismo). Ahora se corta entero.
+  it('notas de 500+ caracteres con un emoji en el borde del corte: el pedido se crea', async () => {
     const product = await createProduct({ price: 1000 });
     const payload = body({ cart: [{ id: product.id, quantity: 1, price: 1000 }], customer: { notes: `${'a'.repeat(499)}🍅 y algo más` } });
     const response = await post(payload);
@@ -512,6 +508,19 @@ describeDb('POST /api/checkout: textos largos', () => {
     const saved = await prisma.order.findFirst({ where: { idempotencyKey: payload.idempotencyKey as string } });
     expect(response.status).toBe(200);
     expect(saved?.notes?.isWellFormed()).toBe(true);
+  });
+
+  it('un surrogate suelto mandado a mano en el JSON tampoco rompe el checkout', async () => {
+    const product = await createProduct({ price: 1000 });
+    const payload = body({ cart: [{ id: product.id, quantity: 1, price: 1000 }], customer: { notes: 'hola \ud83d chau' } });
+    expect((await post(payload)).status).toBe(200);
+  });
+
+  it('ids fuera del rango de la base o mal tipados no dan 500', async () => {
+    for (const id of [3_000_000_000, true, [1], '0x1']) {
+      const response = await post(body({ cart: [{ id, quantity: 1, price: 1000 }] }));
+      expect(response.status, String(id)).toBe(400);
+    }
   });
 });
 

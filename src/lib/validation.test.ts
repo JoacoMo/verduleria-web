@@ -77,13 +77,13 @@ describe('parseOfferPrice', () => {
     expect(parseOfferPrice(800)).toBe(800);
     expect(parseOfferPrice('800')).toBe(800);
     expect(parseOfferPrice(800.456)).toBe(800.46);
-    expect(parseOfferPrice(0)).toBe(0);
   });
 
-  it.each([-1, 'abc', Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, true, '   ', {}, []])('rechaza %s', (value) => {
+  // Una oferta de $ 0 es un error de carga (pedidos gratis), no un regalo.
+  it.each([0, 0.001, -0, -1, 'abc', '0x10', '1e3', Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, true, '   ', {}, []])('rechaza %s', (value) => {
     const error = errorOf(() => parseOfferPrice(value));
     expect(error).toBeInstanceOf(ValidationError);
-    expect(error.message).toBe(`El precio de oferta debe ser un número entre 0 y ${formatArs(10_000_000)}.`);
+    expect(error.message).toBe(`El precio de oferta debe ser mayor a 0 y hasta ${formatArs(10_000_000)}. Para sacar la oferta, dejalo vacío.`);
   });
 });
 
@@ -158,14 +158,22 @@ describe('parseProductPayload (crear)', () => {
     expect(parseProductPayload({ ...base, name: 'x'.repeat(200) }).name).toHaveLength(120);
   });
 
-  it('precio: string numérico ok, redondeo a centavos, 0 permitido', () => {
+  it('precio: string numérico ok, redondeo a centavos', () => {
     expect(parseProductPayload({ ...base, price: '1500' }).price).toBe(1500);
     expect(parseProductPayload({ ...base, price: 999.999 }).price).toBe(1000);
-    expect(parseProductPayload({ ...base, price: 0 }).price).toBe(0);
   });
 
-  it.each([undefined, null, '', 'mil', -1, Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, true, [1500]])('precio inválido: %s', (price) => {
-    expect(errorOf(() => parseProductPayload({ ...base, price })).message).toBe(`El precio debe ser un número entre 0 y ${formatArs(10_000_000)}.`);
+  // $ 0 (o algo que redondea a 0) es siempre un error de tipeo; hex y exponentes
+  // en strings tampoco: Number() los aceptaba y guardaba otro precio.
+  it.each([undefined, null, '', 'mil', 0, 0.001, -0, -1, '0x10', '1e3', Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, true, [1500]])('precio inválido: %s', (price) => {
+    expect(errorOf(() => parseProductPayload({ ...base, price })).message).toBe(`El precio debe ser un número mayor a 0 y hasta ${formatArs(10_000_000)}.`);
+  });
+
+  it('nombre: tiene que tener letras o números (no solo invisibles o símbolos)', () => {
+    expect(errorOf(() => parseProductPayload({ ...base, name: '\u2066\u2069' })).message).toBe('El nombre del producto es obligatorio.');
+    expect(errorOf(() => parseProductPayload({ ...base, name: '\u3164\u3164' })).message).toBe('El nombre del producto es obligatorio.');
+    expect(errorOf(() => parseProductPayload({ ...base, name: '***' })).message).toBe('El nombre del producto es obligatorio.');
+    expect(parseProductPayload({ ...base, name: 'Ñandú 2' }).name).toBe('Ñandú 2');
   });
 
   it('unidad y categoría de las listas', () => {
@@ -181,7 +189,10 @@ describe('parseProductPayload (crear)', () => {
     expect(parseProductPayload({ ...base, image: 42 }).image).toBe('');
     expect(errorOf(() => parseProductPayload({ ...base, image: 'javascript:alert(1)' })).message).toBe('La imagen solo puede ser una URL http o https.');
     expect(errorOf(() => parseProductPayload({ ...base, image: 'data:text/html,<script>alert(1)</script>' })).message).toMatch(/solo puede ser una URL http o https/);
-    expect(errorOf(() => parseProductPayload({ ...base, image: '//evil.example/x.png' })).message).toBe('La imagen debe ser una URL válida o una ruta que empiece con "/".');
+    expect(errorOf(() => parseProductPayload({ ...base, image: '//evil.example/x.png' })).message).toMatch(/archivo del propio sitio/);
+    // El navegador convierte "/\\host" en "//host": tampoco es una ruta propia.
+    expect(errorOf(() => parseProductPayload({ ...base, image: '/\\evil.example/x.png' })).message).toMatch(/archivo del propio sitio/);
+    expect(parseProductPayload({ ...base, image: '/fotos/../product-placeholder.svg' }).image).toBe('/product-placeholder.svg');
     expect(errorOf(() => parseProductPayload({ ...base, image: 'foto.png' })).message).toMatch(/URL válida/);
   });
 
@@ -339,7 +350,7 @@ describe('parseBulkProductUpdates', () => {
     [[{ id: -4, price: 1 }], 0, 'Ítem 1: Falta el id del producto o no es un número entero positivo.'],
     [[{ id: 1 }], 0, 'Ítem 1 (producto 1): No trae ningún cambio (price, available, offerPrice u offerEndsAt).'],
     [[{ id: 1, nombre: 'x' }], 0, 'Ítem 1 (producto 1): No trae ningún cambio (price, available, offerPrice u offerEndsAt).'],
-    [[{ id: 7, price: 'caro' }], 0, `Ítem 1 (producto 7): El precio debe ser un número entre 0 y ${formatArs(10_000_000)}.`],
+    [[{ id: 7, price: 'caro' }], 0, `Ítem 1 (producto 7): El precio debe ser un número mayor a 0 y hasta ${formatArs(10_000_000)}.`],
     [[{ id: 7, available: 'no' }], 0, 'Ítem 1 (producto 7): La disponibilidad debe ser verdadero o falso.'],
     [[{ id: 7, offerEndsAt: '2026-02-30' }], 0, 'Ítem 1 (producto 7): La fecha de vencimiento de la oferta no existe. Revisala.'],
     [[{ id: 5, price: 1 }, { id: 6, price: 1 }, { id: 5, price: 2 }], 2, 'Ítem 3 (producto 5): El mismo producto viene dos veces.'],

@@ -2,8 +2,17 @@
 node_modules
 .next
 
-# Ignorar variables de entorno, contienen secretos como la contraseña de la BD
-.env
+# Variables de entorno: cualquier .env (incluido el .env.local que genera
+# `vercel env pull`) menos el de ejemplo. Contienen la contraseña de la BD, la
+# service role key de Supabase y el secreto de las sesiones.
+.env*
+!.env.example
+
+# Vercel CLI (vercel link)
+.vercel
+
+# Márgenes reales del negocio para el script de precios (el ejemplo sí va al repo)
+scripts/precios/margenes.json
 
 # Configuración local de Claude Code (permisos específicos de la máquina/sesión)
 .claude/settings.local.json

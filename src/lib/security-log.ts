@@ -25,7 +25,7 @@ type SecurityLogDetails = {
   path?: string;
   method?: string;
   reason?: string;
-  /** Identificador no sensible (id de pedido/producto, nombre de usuario probado). */
+  /** Identificador no sensible (id de pedido o de producto). Nunca lo que tipeó alguien en un login. */
   subject?: string;
 };
 

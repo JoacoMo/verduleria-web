@@ -1,4 +1,5 @@
 import { PRODUCT_MAX_CART_QUANTITY, normalizeProductQuantity, type ProductUnit } from './product-units';
+import { sanitizeId } from './sanitize';
 
 /**
  * Cálculo de precios: ÚNICA fuente de verdad para el navegador y el servidor.
@@ -40,16 +41,28 @@ export type ShippingConfig = {
   deliveryMinPurchase: number;
 };
 
-/** Redondeo a centavos para que 0,1 + 0,2 no termine en 0,30000000000000004. */
+/**
+ * Redondeo a centavos, con medio centavo hacia arriba.
+ *
+ * Se redondea sobre la representación decimal ("2.175e2") y no sobre
+ * amount * 100: 2.175 * 100 da 217.49999999999997 en binario y terminaba en 2,17.
+ */
 export function roundMoney(amount: number) {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
+  if (!Number.isFinite(amount)) return amount;
+  const text = String(amount);
+  // Montos ínfimos o enormes ya vienen en notación exponencial ("1e-7"): ahí
+  // el truco de "e2" no aplica y el redondeo común alcanza.
+  if (text.includes('e')) return Math.round(amount * 100) / 100;
+  const rounded = Math.round(Number(`${text}e2`));
+  return Number(`${rounded}e-2`);
 }
 
 /** La oferta está vigente: hay precio de oferta, es menor al normal y no venció. */
 export function isOfferActive(product: Pick<PricedProduct, 'price' | 'offerPrice' | 'offerEndsAt'>, now: Date = new Date()) {
   const { offerPrice, offerEndsAt, price } = product;
   if (offerPrice === null || offerPrice === undefined || !Number.isFinite(offerPrice)) return false;
-  if (offerPrice < 0 || offerPrice >= price) return false;
+  // Una oferta de $ 0 (o negativa) es un error de carga, no un regalo.
+  if (offerPrice <= 0 || offerPrice >= price) return false;
   if (offerEndsAt) {
     const endsAt = offerEndsAt instanceof Date ? offerEndsAt : new Date(offerEndsAt);
     if (Number.isNaN(endsAt.getTime()) || endsAt.getTime() <= now.getTime()) return false;
@@ -128,8 +141,8 @@ export function buildOrderLines(cart: CartRequestLine[], products: PricedProduct
   const unavailable: PricedProduct[] = [];
 
   for (const item of cart) {
-    const id = Number(item?.id);
-    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+    const id = sanitizeId(item?.id);
+    if (id === null || seen.has(id)) continue;
     seen.add(id);
 
     const product = byId.get(id);
@@ -172,9 +185,11 @@ export function detectPriceChanges(
 ): PriceChange[] {
   const expectedById = new Map<number, number>();
   for (const item of expected) {
-    const id = Number(item?.id);
+    const id = sanitizeId(item?.id);
     const price = typeof item?.price === 'number' ? item.price : Number.NaN;
-    if (Number.isInteger(id) && Number.isFinite(price)) expectedById.set(id, price);
+    // Con ids repetidos gana la primera aparición, igual que en buildOrderLines:
+    // si no, se comparaba contra otra línea y salía un "cambió el precio" falso.
+    if (id !== null && Number.isFinite(price) && !expectedById.has(id)) expectedById.set(id, price);
   }
 
   return lines.flatMap((line) => {

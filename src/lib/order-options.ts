@@ -60,3 +60,9 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   cancelled: 'Cancelado',
   failed: 'Con problema',
 };
+
+/**
+ * Tope de pedidos que devuelve el panel por día. Si se llega, el panel avisa:
+ * con un ataque de pedidos falsos, los reales no pueden quedar tapados en silencio.
+ */
+export const MAX_ORDERS_PER_DAY = 500;

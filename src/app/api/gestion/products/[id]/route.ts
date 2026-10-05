@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { hasPrismaCode, prisma } from '@/lib/prisma';
 import { verifyAdminAuth } from '@/lib/auth';
 import { enforceRateLimit } from '@/lib/rate-limit';
-import { ValidationError, assertOfferConsistency, parseProductPayload, touchesPricing } from '@/lib/validation';
+import { ValidationError, assertOfferConsistency, dropExpiredOfferEndsAt, parseProductPayload, touchesPricing } from '@/lib/validation';
 import { parseNumericId } from '@/lib/route-params';
 import { invalidarProductos, toProduct } from '@/lib/products';
 import { readJsonBody } from '@/lib/request-body';
@@ -47,6 +47,7 @@ export async function PUT(request: Request, context: RouteContext) {
       if (!current) {
         return NextResponse.json({ error: NOT_FOUND_MESSAGE }, { status: 404 });
       }
+      dropExpiredOfferEndsAt(data, current, now);
       assertOfferConsistency(data, current, now);
     }
 

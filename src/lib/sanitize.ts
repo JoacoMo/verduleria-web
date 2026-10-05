@@ -19,11 +19,25 @@ const CONTROL_CHARS = new RegExp(
   'g',
 );
 
-/** Invisibles usados para disfrazar texto: zero-width, overrides de dirección y BOM. */
+/**
+ * Invisibles usados para disfrazar texto: soft hyphen, marcas y overrides (LRE..RLO)
+ * y aislamientos (LRI..PDI) de dirección —los que usa "Trojan Source"—, zero-width,
+ * rellenos Hangul, tags Unicode y BOM. Con estos se podían cargar nombres que no
+ * se ven en el panel ni en el mensaje de WhatsApp.
+ */
 const INVISIBLE_CHARS = new RegExp(
-  `[${charRange(0x200b, 0x200f)}${charRange(0x202a, 0x202e)}${charRange(0x2060, 0x2064)}\\ufeff]`,
+  `[\\u00ad\\u034f\\u061c\\u115f\\u1160\\u17b4\\u17b5\\u180e${charRange(0x200b, 0x200f)}${charRange(0x202a, 0x202e)}${charRange(0x2060, 0x206f)}\\u3164\\ufeff\\uffa0]|\\udb40[\\udc00-\\udc7f]`,
   'g',
 );
+
+/**
+ * Surrogates UTF-16 sueltos (medio emoji). Un string así no se puede pasar a
+ * UTF-8: Prisma lo rechaza y el pedido terminaba en un 500. Se matchean primero
+ * los pares (y se dejan) y después los sueltos (y se sacan).
+ */
+function dropLoneSurrogates(text: string) {
+  return text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g, (match) => (match.length === 2 ? match : ''));
+}
 
 export type SanitizeTextOptions = {
   maxLength: number;
@@ -38,7 +52,7 @@ export type SanitizeTextOptions = {
 export function sanitizeText(value: unknown, options: SanitizeTextOptions): string | null {
   if (typeof value !== 'string') return null;
 
-  let clean = value
+  let clean = dropLoneSurrogates(value)
     .normalize('NFC')
     .replace(CONTROL_CHARS, '')
     .replace(INVISIBLE_CHARS, '');
@@ -50,21 +64,32 @@ export function sanitizeText(value: unknown, options: SanitizeTextOptions): stri
   clean = clean.trim();
 
   if (clean.length > options.maxLength) {
-    clean = clean.slice(0, options.maxLength).trim();
+    // Si el corte cae en medio de un emoji, se saca la mitad que quedó colgada.
+    clean = clean.slice(0, options.maxLength).replace(/[\uD800-\uDBFF]$/, '').trim();
   }
 
   return clean;
 }
 
+// Decimal común con punto ("12", "-3.5", ".5"). Nada de "0x10", "0b11", "1e3" ni
+// "Infinity": Number() los acepta y un valor pegado de otro lado terminaba
+// guardado como un precio distinto sin dar error.
+const DECIMAL_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
+
 /**
  * Número finito dentro de un rango. Devuelve null si no es válido.
- * Rechaza NaN, Infinity y strings vacíos (que Number() convertiría en 0).
+ * Acepta un number o un string decimal simple; rechaza NaN, Infinity y vacíos.
  */
 export function sanitizeNumber(value: unknown, options: { min: number; max: number; decimals?: number }): number | null {
-  if (typeof value === 'string' && value.trim() === '') return null;
-  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  let parsed: number;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string' && DECIMAL_TEXT.test(value.trim())) {
+    parsed = Number(value.trim());
+  } else {
+    return null;
+  }
 
-  const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
   if (parsed < options.min || parsed > options.max) return null;
 
@@ -72,9 +97,23 @@ export function sanitizeNumber(value: unknown, options: { min: number; max: numb
   return Number(parsed.toFixed(options.decimals));
 }
 
-/** Entero positivo (ids de rutas y de carrito). */
+/** Tope de una columna Int de Postgres (INT4): un id mayor hacía fallar a Prisma con un 500. */
+export const MAX_DB_INT = 2_147_483_647;
+
+/**
+ * Entero positivo que entra en un Int de la base (ids de rutas y de carrito).
+ * Acepta solo un number o un string de dígitos: nada de true, [5], "0x10" ni "1e3",
+ * que Number() convertía en ids válidos y pegaban en otro producto.
+ */
 export function sanitizeId(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > Number.MAX_SAFE_INTEGER) return null;
+  let parsed: number;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string' && /^\d{1,10}$/.test(value.trim())) {
+    parsed = Number(value.trim());
+  } else {
+    return null;
+  }
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_DB_INT) return null;
   return parsed;
 }

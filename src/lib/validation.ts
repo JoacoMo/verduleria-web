@@ -122,6 +122,15 @@ function listUnits() {
   return `${all.join(', ')} o ${last}`;
 }
 
+// Letras o números de cualquier idioma. Se arma con new RegExp para no depender
+// del target de TypeScript con la bandera "u".
+const LETTER_OR_DIGIT = new RegExp('[\\p{L}\\p{N}]', 'gu');
+
+/** Cuántas letras o dígitos tiene un texto: un nombre hecho solo de símbolos o espacios raros no sirve. */
+function countLettersOrDigits(text: string) {
+  return text.match(LETTER_OR_DIGIT)?.length ?? 0;
+}
+
 /**
  * La imagen es opcional, pero si viene tiene que ser una URL http(s) o una ruta
  * relativa del propio sitio. Sin esto se podían guardar cosas como `javascript:...`
@@ -131,10 +140,21 @@ function parseImageUrl(value: unknown) {
   const image = sanitizeText(value, { maxLength: MAX_IMAGE_URL_LENGTH, singleLine: true }) ?? '';
   if (!image) return '';
 
-  // Ruta relativa propia (ej: /product-placeholder.svg). Se descarta `//host`
-  // porque es una URL protocol-relative a otro dominio.
-  if (image.startsWith('/') && !image.startsWith('//')) {
-    return image;
+  // Ruta relativa propia (ej: /product-placeholder.svg). Se resuelve contra un
+  // origen ficticio y se exige que siga siendo ese origen: así se descartan
+  // `//host` y también `/\host`, que el navegador convierte en `//host`.
+  if (image.startsWith('/')) {
+    const base = 'https://ruta-relativa.invalid';
+    let resolved: URL;
+    try {
+      resolved = new URL(image, base);
+    } catch {
+      throw new ValidationError('La imagen debe ser una URL válida o una ruta que empiece con "/".');
+    }
+    if (image.includes('\\') || resolved.origin !== base) {
+      throw new ValidationError('La ruta de la imagen tiene que ser un archivo del propio sitio (ej: /product-placeholder.svg).');
+    }
+    return `${resolved.pathname}${resolved.search}`;
   }
 
   let parsed: URL;
@@ -151,10 +171,12 @@ function parseImageUrl(value: unknown) {
   return parsed.toString();
 }
 
+// Un precio de $ 0 es siempre un error de tipeo: con retiro no hay mínimo, así
+// que cualquiera podía hacer pedidos de $ 0. Se exige más de 0.
 function parsePrice(value: unknown) {
   const price = sanitizeNumber(value, { min: 0, max: MAX_PRICE, decimals: 2 });
-  if (price === null) {
-    throw new ValidationError(`El precio debe ser un número entre 0 y ${formatArs(MAX_PRICE)}.`);
+  if (price === null || price <= 0) {
+    throw new ValidationError(`El precio debe ser un número mayor a 0 y hasta ${formatArs(MAX_PRICE)}.`);
   }
   return price;
 }
@@ -164,8 +186,8 @@ export function parseOfferPrice(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
   const offerPrice = sanitizeNumber(value, { min: 0, max: MAX_PRICE, decimals: 2 });
-  if (offerPrice === null) {
-    throw new ValidationError(`El precio de oferta debe ser un número entre 0 y ${formatArs(MAX_PRICE)}.`);
+  if (offerPrice === null || offerPrice <= 0) {
+    throw new ValidationError(`El precio de oferta debe ser mayor a 0 y hasta ${formatArs(MAX_PRICE)}. Para sacar la oferta, dejalo vacío.`);
   }
   return offerPrice;
 }
@@ -232,6 +254,22 @@ export type PricingChange = {
   offerEndsAt?: Date | null;
 };
 
+/**
+ * Una oferta nueva no hereda un vencimiento que ya pasó.
+ *
+ * Si se carga un precio de oferta sin fecha y el producto tenía guardada la
+ * fecha de una oferta anterior ya vencida, sin esto la oferta nueva "nacía
+ * vencida": la API respondía OK y la tienda seguía cobrando el precio normal.
+ * Se interpreta como lo que es: una oferta sin vencimiento. Muta `change`.
+ */
+export function dropExpiredOfferEndsAt(change: PricingChange, current: PricingState | null, now: Date = new Date()) {
+  if (typeof change.offerPrice !== 'number' || change.offerEndsAt !== undefined) return;
+  const savedEndsAt = current?.offerEndsAt;
+  if (savedEndsAt && savedEndsAt.getTime() <= now.getTime()) {
+    change.offerEndsAt = null;
+  }
+}
+
 /** El cambio toca precio u oferta: hay que mirar cómo queda contra lo guardado. */
 export function touchesPricing(change: PricingChange) {
   return change.price !== undefined || change.offerPrice !== undefined || change.offerEndsAt !== undefined;
@@ -296,7 +334,7 @@ export function parseProductPayload(payload: unknown, options: { partial?: boole
 
   if (!partial || body.name !== undefined) {
     const name = sanitizeText(body.name, { maxLength: MAX_NAME_LENGTH, singleLine: true });
-    if (!name) {
+    if (!name || countLettersOrDigits(name) === 0) {
       throw new ValidationError('El nombre del producto es obligatorio.');
     }
     data.name = name;
@@ -471,6 +509,7 @@ export function resolveBulkUpdates(
       return;
     }
     try {
+      dropExpiredOfferEndsAt(update.data, saved, now);
       assertOfferConsistency(update.data, saved, now);
     } catch (error) {
       throw toItemError(error, index, update);
@@ -521,7 +560,7 @@ export function parseCustomerPayload(payload: unknown, options: { isDelivery: bo
   const body = (payload !== null && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
 
   const customerName = sanitizeText(body.customerName, { maxLength: MAX_CUSTOMER_NAME_LENGTH, singleLine: true });
-  if (!customerName || customerName.length < 2) {
+  if (!customerName || countLettersOrDigits(customerName) < 2) {
     throw new ValidationError('Ingresá tu nombre para saber de quién es el pedido.');
   }
 

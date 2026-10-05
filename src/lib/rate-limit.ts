@@ -73,7 +73,10 @@ export function resetRateLimit(key: string) {
 
 /**
  * IP del cliente según las cabeceras que setea el proxy de Vercel.
- * Se toma el primer valor de x-forwarded-for, que es el cliente real.
+ *
+ * SOLO es confiable detrás de Vercel, que pisa x-forwarded-for y x-real-ip con
+ * la IP real. Si algún día se hostea en otro lado, hay que leer la cabecera que
+ * ponga ESE proxy: el primer valor de x-forwarded-for lo puede mandar el cliente.
  */
 export function getClientIp(request: Request) {
   const forwardedFor = request.headers.get('x-forwarded-for');
@@ -113,10 +116,27 @@ export type RateLimitPreset = keyof typeof RATE_LIMITS;
  *   const limited = enforceRateLimit(request, 'adminWrite');
  *   if (limited) return limited;
  */
+/**
+ * Clave del límite para una IP. En IPv6 cada cliente recibe un /64 entero
+ * (2^64 direcciones): contar por dirección exacta le daba a un atacante un cupo
+ * nuevo por cada dirección. Se agrupa por /64; las IPv4 quedan igual.
+ */
+export function rateLimitSubject(ip: string) {
+  if (!ip.includes(':')) return ip;
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped) return mapped[1];
+  const [head = '', tail = ''] = ip.toLowerCase().split('::', 2);
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  const zeros = Array(Math.max(0, 8 - headParts.length - tailParts.length)).fill('0');
+  const groups = [...headParts, ...zeros, ...tailParts].slice(0, 4).map((group) => group.replace(/^0+(?=.)/, ''));
+  return `${groups.join(':')}::/64`;
+}
+
 export function enforceRateLimit(request: Request, preset: RateLimitPreset, message?: string) {
   const { limit, windowMs } = RATE_LIMITS[preset];
   const ip = getClientIp(request);
-  const result = checkRateLimit(`${preset}:${ip}`, limit, windowMs);
+  const result = checkRateLimit(`${preset}:${rateLimitSubject(ip)}`, limit, windowMs);
 
   if (result.ok) return null;
 

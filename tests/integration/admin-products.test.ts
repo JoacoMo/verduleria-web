@@ -77,7 +77,9 @@ describeDb('POST /api/gestion/products', () => {
   it('validaciones → 400 con el mensaje; JSON roto → 400', async () => {
     const bad = [
       [{ price: 1000, unit: 'kg', category: 'Frutas' }, 'El nombre del producto es obligatorio.'],
-      [{ name: 'X', price: -5, unit: 'kg', category: 'Frutas' }, `El precio debe ser un número entre 0 y ${formatArs(10_000_000)}.`],
+      [{ name: 'X', price: -5, unit: 'kg', category: 'Frutas' }, `El precio debe ser un número mayor a 0 y hasta ${formatArs(10_000_000)}.`],
+      [{ name: 'X', price: 0, unit: 'kg', category: 'Frutas' }, `El precio debe ser un número mayor a 0 y hasta ${formatArs(10_000_000)}.`],
+      [{ name: '\u2066\u2069', price: 5, unit: 'kg', category: 'Frutas' }, 'El nombre del producto es obligatorio.'],
       [{ name: 'X', price: 5, unit: 'litro', category: 'Frutas' }, 'La unidad debe ser kg, g, unidad, atado o bandeja.'],
       [{ name: 'X', price: 5, unit: 'kg', category: 'Frutas', image: 'javascript:alert(1)' }, 'La imagen solo puede ser una URL http o https.'],
       [{ name: 'X', price: 5, unit: 'kg', category: 'Frutas', offerPrice: 1, offerEndsAt: '2020-01-01' }, 'La fecha de vencimiento de la oferta ya pasó.'],
@@ -156,18 +158,24 @@ describeDb('PUT /api/gestion/products/[id]', () => {
     }
   });
 
-  // BUG (severidad media): si el producto tiene una oferta VENCIDA guardada
-  // (offerPrice + offerEndsAt en el pasado) y se carga un precio de oferta nuevo
-  // sin mandar offerEndsAt, el vencimiento viejo queda: la oferta nueva nace
-  // vencida. La API responde 200 y la tienda sigue mostrando el precio normal,
-  // sin ningún aviso. (El editor de ofertas del panel siempre manda
-  // offerEndsAt, así que pega sobre todo a requests armados a mano / scripts.)
-  it.fails('BUG: una oferta nueva sin vencimiento hereda el vencimiento viejo y nace vencida', async () => {
+  // Era un bug: con una oferta VENCIDA guardada, cargar un precio de oferta nuevo
+  // sin offerEndsAt dejaba el vencimiento viejo y la oferta nacía vencida (200
+  // sin aviso). Ahora una oferta nueva sin fecha es una oferta sin vencimiento.
+  it('una oferta nueva sin vencimiento no hereda el vencimiento viejo', async () => {
     const product = await createProduct({ price: 1000, offerPrice: 900, offerEndsAt: new Date(Date.now() - DAY) });
     const response = await put(product.id, { offerPrice: 700 });
     expect(response.status).toBe(200);
     const saved = await readJson<Product>(response);
     expect(isOfferActive(saved)).toBe(true);
+    expect(saved.offerEndsAt).toBeNull();
+  });
+
+  it('una oferta con vencimiento FUTURO sí lo conserva al cambiar solo el precio de oferta', async () => {
+    const endsAt = new Date(Date.now() + 3 * DAY);
+    const product = await createProduct({ price: 1000, offerPrice: 900, offerEndsAt: endsAt });
+    const saved = await readJson<Product>(await put(product.id, { offerPrice: 800 }));
+    expect(saved.offerPrice).toBe(800);
+    expect(saved.offerEndsAt).toBe(endsAt.toISOString());
   });
 });
 
@@ -265,10 +273,8 @@ describeDb('POST /api/gestion/products/bulk', () => {
     }
   });
 
-  // Mismo BUG que en el PUT: el script de precios (o cualquier cliente de la API)
-  // que mande { id, offerPrice } sobre un producto con una oferta vencida deja
-  // la oferta nueva vencida desde el primer segundo, con 200 "updated: 1".
-  it.fails('BUG: bulk con offerPrice sin offerEndsAt sobre una oferta vencida la deja vencida', async () => {
+  // Mismo caso que en el PUT, por el bulk (lo usa el script de precios).
+  it('bulk con offerPrice sin offerEndsAt sobre una oferta vencida la deja vigente', async () => {
     const product = await createProduct({ price: 1000, offerPrice: 900, offerEndsAt: new Date(Date.now() - DAY) });
     expect(await readJson(await bulk({ updates: [{ id: product.id, offerPrice: 700 }] }))).toEqual({ updated: 1, notFound: [] });
     const saved = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });

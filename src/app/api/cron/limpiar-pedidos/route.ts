@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { safeCompare } from '@/lib/auth';
+import { isExampleSecret, safeCompare } from '@/lib/auth';
 import { getClientIp } from '@/lib/rate-limit';
 import { logSecurityEvent } from '@/lib/security-log';
 import { getCleanupCutoffs } from '@/lib/order-lifecycle';
@@ -29,8 +29,8 @@ const PATH = '/api/cron/limpiar-pedidos';
  */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    console.error(`Error en GET ${PATH}: falta CRON_SECRET, no se corre la limpieza.`);
+  if (!secret || isExampleSecret(secret)) {
+    console.error(`Error en GET ${PATH}: falta CRON_SECRET o tiene el valor de ejemplo de .env.example, no se corre la limpieza.`);
     return NextResponse.json({ error: 'La limpieza no está configurada.' }, { status: 500 });
   }
 

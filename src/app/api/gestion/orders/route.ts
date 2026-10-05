@@ -4,6 +4,7 @@ import { verifyAdminAuth } from '@/lib/auth';
 import { enforceRateLimit } from '@/lib/rate-limit';
 import { getArgentinaParts } from '@/lib/store-hours';
 import { isValidCalendarDate } from '@/lib/validation';
+import { MAX_ORDERS_PER_DAY } from '@/lib/order-options';
 import { ORDER_RECORD_SELECT, toOrderRecord } from '@/lib/order-lifecycle';
 
 export const runtime = 'nodejs';
@@ -13,7 +14,6 @@ const ARGENTINA_UTC_OFFSET = '-03:00';
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Tope de cordura para una verdulería de barrio: si un día pasa de esto, hay
 // algo raro (spam) y no queremos mandarle al celular del dueño una lista gigante.
-const MAX_ORDERS_PER_DAY = 500;
 
 /**
  * Pedidos de un día (?date=YYYY-MM-DD, hora argentina; sin fecha = hoy).
@@ -30,7 +30,10 @@ export async function GET(request: Request) {
   if (limited) return limited;
 
   const dateParam = new URL(request.url).searchParams.get('date');
-  if (dateParam !== null && !isValidCalendarDate(dateParam)) {
+  // Rango de cordura: el panel nunca necesita pedidos fuera de esto, y un año
+  // 9999 hacía que el fin del día cayera en el 10000, que Prisma no acepta (500).
+  const year = dateParam !== null ? Number(dateParam.slice(0, 4)) : null;
+  if (dateParam !== null && (!isValidCalendarDate(dateParam) || year === null || year < 2020 || year > 2100)) {
     return NextResponse.json({ error: 'Fecha inválida. Usá el formato AAAA-MM-DD.' }, { status: 400 });
   }
   const date = dateParam ?? getArgentinaParts().date;

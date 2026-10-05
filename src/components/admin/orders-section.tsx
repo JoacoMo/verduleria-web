@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Ban, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Store, Truck, type LucideIcon } from 'lucide-react';
 import type { OrderRecord, StoreInfo } from '@/lib/types';
 import { formatArs } from '@/lib/format-price';
+import { MAX_ORDERS_PER_DAY } from '@/lib/order-options';
 import { InlineAlert } from './notices';
 import { Spinner } from './fields';
 import { OrderCard } from './order-card';
@@ -181,6 +182,12 @@ export function OrdersSection({
         ) : null
       ) : (
         <>
+          {orders.length >= MAX_ORDERS_PER_DAY ? (
+            <InlineAlert kind="error">
+              Hay más de {MAX_ORDERS_PER_DAY} pedidos este día y solo se muestran los últimos {MAX_ORDERS_PER_DAY}.
+              Si no esperabas tantos, puede ser un ataque de pedidos falsos: avisale a quien mantiene el sitio.
+            </InlineAlert>
+          ) : null}
           <div className="adm-summary" aria-label="Resumen del día">
             <div className="adm-stat adm-stat--paid">
               <span className="adm-stat__label">Cobrado</span>

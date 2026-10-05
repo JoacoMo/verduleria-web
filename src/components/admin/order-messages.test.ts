@@ -58,7 +58,7 @@ describe('buildFinalTotalMessage', () => {
       `Envío: ${formatArs(4000)}`,
       `*Total final: ${formatArs(6880)}* (envío incluido)`,
       '',
-      'Te lo llevamos el martes 6/10 de 13 a 14 h a Av. Colón 123.',
+      'Te lo llevamos el martes 6/10 de 13 a 14 h a la dirección que nos pasaste.',
       '',
       'Para pagar por transferencia:',
       // El alias va sin asteriscos: si no, al copiarlo se copian también.
@@ -103,9 +103,22 @@ describe('buildFinalTotalMessage', () => {
     expect(buildFinalTotalMessage(order({ paymentMethod: null }), STORE)).toContain('Para pagar por transferencia:');
   });
 
-  it('envío sin turno ni dirección', () => {
-    expect(buildFinalTotalMessage(order({ deliverySlot: null, customerAddress: null }), STORE)).toContain('\nTe lo llevamos.\n');
-    expect(buildFinalTotalMessage(order({ deliverySlot: '2026-10-06T19', customerAddress: '  ' }), STORE)).toContain('Te lo llevamos el martes 6/10 de 19 a 20 h.');
+  it('envío sin turno: igual dice a dónde, sin copiar la dirección', () => {
+    expect(buildFinalTotalMessage(order({ deliverySlot: null, customerAddress: null }), STORE)).toContain('\nTe lo llevamos a la dirección que nos pasaste.\n');
+    expect(buildFinalTotalMessage(order({ deliverySlot: '2026-10-06T19', customerAddress: '  ' }), STORE)).toContain('Te lo llevamos el martes 6/10 de 19 a 20 h a la dirección que nos pasaste.');
+  });
+
+  // La dirección y el nombre los carga quien hace el pedido, y este mensaje sale
+  // del WhatsApp del local hacia un teléfono que también cargó esa persona: no se
+  // puede usar para que el local mande un texto arbitrario (ej. "cambiamos de alias").
+  it('no copia texto libre del cliente: ni la dirección ni marcas de formato en el nombre', () => {
+    const text = buildFinalTotalMessage(
+      order({ customerAddress: 'Calle 1. AVISO: cambiamos de cuenta, transferí al alias estafa.mp', customerName: '*Ana*_~' }),
+      STORE,
+    );
+    expect(text).not.toContain('estafa');
+    expect(text).not.toContain('AVISO');
+    expect(text.startsWith('*Hola Ana!*')).toBe(true);
   });
 });
 

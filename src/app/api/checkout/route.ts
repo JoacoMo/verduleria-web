@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sanitizeId } from '@/lib/sanitize';
 import { hasPrismaCode, prisma } from '@/lib/prisma';
 import { siteConfig } from '@/lib/site';
 import { enforceRateLimit } from '@/lib/rate-limit';
@@ -166,7 +167,9 @@ export async function POST(request: Request) {
 
     // ---- 4. Productos y precios del servidor ----
     const cart = parseCheckoutCart(body.cart);
-    const productIds = [...new Set(cart.map((item) => Number(item.id)).filter((id) => Number.isInteger(id) && id > 0))];
+    // Mismo criterio que buildOrderLines: un id gigante (fuera de un Int de la
+    // base) o mal tipado (true, [1], "0x1") se descarta en vez de llegar a Prisma.
+    const productIds = [...new Set(cart.map((item) => sanitizeId(item.id)).filter((id): id is number => id !== null))];
 
     // Directo de la base y no de la caché del catálogo: lo que se cobra tiene
     // que ser el precio de este momento.
@@ -221,6 +224,14 @@ export async function POST(request: Request) {
 
     // ---- 5. Totales y mínimo de envío (sobre el subtotal, sin el envío) ----
     const totals = computeTotals(lines, isDelivery, siteConfig);
+
+    // Defensa en profundidad: la validación del panel ya no deja guardar precios
+    // de $ 0, pero si alguno quedó cargado de antes no se registra un pedido gratis.
+    const zeroPriced = lines.filter((line) => line.price <= 0);
+    if (totals.subtotal <= 0 || zeroPriced.length > 0) {
+      console.error('Error en POST /api/checkout: producto con precio 0 en el catálogo:', zeroPriced.map((line) => line.id));
+      return badRequest('Hay un producto sin precio cargado. Escribinos por WhatsApp para hacer el pedido.');
+    }
     if (totals.belowDeliveryMinimum) {
       const missing = roundMoney(siteConfig.deliveryMinPurchase - totals.subtotal);
       return badRequest(

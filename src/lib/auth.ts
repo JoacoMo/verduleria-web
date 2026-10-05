@@ -15,8 +15,9 @@ import { getClientIp } from './rate-limit';
  *
  * Revocación: el token lleva la versión de ADMIN_TOKEN_VERSION. Si se cambia esa
  * variable en Vercel (por ejemplo, después de cambiar la contraseña o perder el
- * celular), todos los tokens ya emitidos dejan de valer al instante, sin tener
- * que rotar JWT_SECRET.
+ * celular) y se hace Redeploy —las variables nuevas solo aplican a deploys
+ * nuevos—, todos los tokens ya emitidos dejan de valer, sin rotar JWT_SECRET.
+ * "Cerrar sesión" borra la cookie de ese navegador; no revoca el token en sí.
  */
 const TOKEN_ISSUER = 'el-pampa';
 export const ADMIN_COOKIE_NAME = 'elpampa_admin';
@@ -24,12 +25,30 @@ const ADMIN_COOKIE_PATH = '/api/gestion';
 export const ADMIN_SESSION_SECONDS = 12 * 60 * 60;
 
 const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Valores de ejemplo publicados en .env.example (el repo es público). Si alguno
+ * llega a producción, cualquiera podría firmar una sesión de admin o entrar al
+ * panel: con estos valores se falla cerrado en vez de solo avisar.
+ */
+const EXAMPLE_SECRETS = new Set([
+  'cambiar-por-un-texto-largo-y-random',
+  'cambiar-por-otro-texto-largo-y-random',
+  'cambiar-esta-clave',
+]);
+
+export function isExampleSecret(value: string) {
+  return EXAMPLE_SECRETS.has(value.trim());
+}
 let shortSecretWarned = false;
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error('JWT_SECRET no está configurado.');
+  }
+  if (isExampleSecret(secret)) {
+    throw new Error('JWT_SECRET tiene el valor de ejemplo de .env.example. Generá uno nuevo (openssl rand -base64 48) y hacé Redeploy.');
   }
 
   // Un secreto corto es más fácil de romper por fuerza bruta, pero cortar el
@@ -132,11 +151,26 @@ export function verifyAdminAuth(request: Request): AdminAuthResult {
     return unauthorized('No autorizado. Iniciá sesión.', 'sin cookie de sesión');
   }
 
+  // Un JWT_SECRET faltante o de ejemplo es un error de configuración del
+  // servidor, no un token inválido: se responde 500 y se loguea como tal.
+  let secret: string;
   try {
-    const payload = jwt.verify(token, getJwtSecret(), {
+    secret = getJwtSecret();
+  } catch (error) {
+    console.error('Error en verifyAdminAuth: configuración de JWT_SECRET inválida:', error);
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: 'El panel no está configurado.' }, { status: 500 }),
+    };
+  }
+
+  try {
+    const payload = jwt.verify(token, secret, {
       issuer: TOKEN_ISSUER,
       // Fijamos el algoritmo para descartar tokens firmados con otro (por ejemplo "none").
       algorithms: ['HS256'],
+      // Exige iat y corta a las 12 h aunque alguien firmara un token sin exp.
+      maxAge: ADMIN_SESSION_SECONDS,
     });
 
     // Que el token esté bien firmado no alcanza: tiene que ser de admin y de la

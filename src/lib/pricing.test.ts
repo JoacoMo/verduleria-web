@@ -41,12 +41,9 @@ describe('roundMoney', () => {
     expect(lineTotal({ price: 1234.5, quantity: 0.25 })).toBe(308.63);
   });
 
-  // BUG (severidad mínima, 1 centavo): Number.EPSILON es un margen absoluto que
-  // solo alcanza para montos chicos. Desde ~2 pesos, un medio centavo que en
-  // binario queda apenas por debajo se redondea para abajo: 2,9 × 0,75 = 2,175
-  // da 2,17 en vez de 2,18 (y 10,075 da 10,07). No cambia cobros reales (los
-  // precios son enteros), pero roundMoney no cumple "redondeo a centavos" half-up.
-  it.fails('BUG: medio centavo en montos >= 2 se redondea para abajo (2,175 → 2,17)', () => {
+  // Era un bug: con Number.EPSILON como margen, 2,175 (que en binario queda
+  // apenas por debajo) se redondeaba a 2,17. Ahora se redondea sobre el decimal.
+  it('medio centavo se redondea para arriba también en montos >= 2 (2,175 → 2,18)', () => {
     expect(roundMoney(2.175)).toBe(2.18);
     expect(lineTotal({ price: 2.9, quantity: 0.75 })).toBe(2.18);
     expect(roundMoney(10.075)).toBe(10.08);
@@ -82,11 +79,11 @@ describe('isOfferActive / getEffectivePrice / getDiscountPercent', () => {
     expect(isOfferActive(product({ offerPrice: -1 }), NOW)).toBe(false);
   });
 
-  it('oferta en 0 (regalo) cuenta como vigente: 100% de descuento', () => {
+  it('una oferta en 0 que haya quedado guardada no se aplica (sería un pedido gratis)', () => {
     const p = product({ offerPrice: 0 });
-    expect(isOfferActive(p, NOW)).toBe(true);
-    expect(getEffectivePrice(p, NOW)).toBe(0);
-    expect(getDiscountPercent(p, NOW)).toBe(100);
+    expect(isOfferActive(p, NOW)).toBe(false);
+    expect(getEffectivePrice(p, NOW)).toBe(p.price);
+    expect(getDiscountPercent(p, NOW)).toBe(0);
   });
 
   it('vencimiento: vigente antes, vencida justo en el instante y después', () => {
@@ -304,12 +301,9 @@ describe('detectPriceChanges', () => {
     expect(detectPriceChanges([{ id: 99, price: 1 }, { id: 'x', price: 1 }], lines)).toEqual([]);
   });
 
-  // BUG (severidad baja): buildOrderLines toma la PRIMERA aparición de un id
-  // repetido, pero detectPriceChanges se queda con la ÚLTIMA. Con un carrito
-  // [{id:1, price:1000}, {id:1, price:1}] (armado a mano: la tienda no repite
-  // ids) el checkout responde 409 PRECIOS_CAMBIARON por un precio que ni
-  // siquiera es el de la línea que se iba a cobrar.
-  it.fails('BUG: con ids repetidos compara contra la última aparición y no contra la primera', () => {
+  // Era un bug: buildOrderLines toma la PRIMERA aparición de un id repetido y
+  // detectPriceChanges se quedaba con la ÚLTIMA (409 falso).
+  it('con ids repetidos compara contra la primera aparición, igual que buildOrderLines', () => {
     expect(detectPriceChanges([{ id: 1, price: 1000 }, { id: 1, price: 1 }], lines)).toEqual([]);
   });
 });

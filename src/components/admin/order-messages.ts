@@ -17,7 +17,8 @@ export type FinalTotalStoreInfo = Pick<StoreInfo, 'storeName' | 'storeAddress' |
 export type ReviewStoreInfo = Pick<StoreInfo, 'storeName' | 'googleReviewUrl'>;
 
 function greeting(order: Pick<OrderRecord, 'customerName'>) {
-  const name = firstName(order.customerName);
+  // Sin las marcas de formato de WhatsApp: el nombre lo escribió el cliente.
+  const name = firstName(order.customerName).replace(/[*_~`]/g, '');
   return name ? `*Hola ${name}!*` : '*Hola!*';
 }
 
@@ -53,10 +54,12 @@ export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStor
 
   if (isDelivery) {
     const slot = describeSlot(order.deliverySlot);
-    const address = order.customerAddress?.trim();
     const when = slot ? ` el ${lowercaseFirst(slot)}` : '';
-    const where = address ? ` a ${address}` : '';
-    lines.push(`Te lo llevamos${when}${where}.`);
+    // La dirección NO va en el mensaje: es texto libre que cargó quien hizo el
+    // pedido, y este mensaje sale del WhatsApp del local hacia un teléfono que
+    // también cargó esa persona. Se podía usar para que el local mandara un
+    // "cambiamos de alias" falso. El cliente ya sabe su dirección.
+    lines.push(`Te lo llevamos${when} a la dirección que nos pasaste.`);
   } else {
     lines.push(`Ya lo podés pasar a retirar por ${store.storeAddress}.`);
   }

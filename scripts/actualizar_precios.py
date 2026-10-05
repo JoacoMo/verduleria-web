@@ -1656,6 +1656,10 @@ def armar_plan(
 # --------------------------------------------------------------------------- #
 
 
+# Únicos hosts a los que se les permite http:// (pruebas en la propia compu).
+HOSTS_LOCALES = ('localhost', '127.0.0.1', '::1')
+
+
 def normalizar_url(url: str) -> str:
     url = (url or '').strip()
     partes = urlsplit(url)
@@ -1798,6 +1802,10 @@ class ClienteApi:
 
     def iniciar_sesion(self, usuario: str, password: str) -> None:
         descripcion = 'Inicio de sesión'
+        # Segunda barrera: nunca mandar la contraseña por http:// a otro host.
+        partes = urlsplit(self.base_url)
+        if partes.scheme != 'https' and partes.hostname not in HOSTS_LOCALES:
+            raise ErrorLogin('No mando la contraseña por http://: usá la dirección https:// del sitio.')
         # Un 429 en el login NO se reintenta: es el freno contra fuerza bruta y
         # cada intento extra alarga el bloqueo.
         respuesta = self._pedir(
@@ -1987,11 +1995,40 @@ def filas_reporte(plan: Plan) -> list[dict[str, Any]]:
     ]
 
 
+# Un texto que empieza con alguno de estos caracteres Excel/LibreOffice lo toma
+# como fórmula. El reporte copia textos que vienen de afuera (la lista del
+# mayorista, nombres del sitio): una celda "=HYPERLINK(...)" se ejecutaría al
+# abrir el reporte.
+_PREFIJOS_FORMULA = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _texto_seguro(valor: Any) -> Any:
+    """Que Excel no interprete como fórmula un texto que vino de la lista o del sitio."""
+    if isinstance(valor, str) and valor.startswith(_PREFIJOS_FORMULA):
+        return "'" + valor
+    return valor
+
+
+def _sin_formulas(tabla: pd.DataFrame) -> pd.DataFrame:
+    copia = tabla.copy()
+    for columna in copia.columns:
+        # En pandas 3 las columnas de texto son dtype "str", ya no object.
+        if copia[columna].dtype == object or pd.api.types.is_string_dtype(copia[columna]):
+            copia[columna] = copia[columna].map(_texto_seguro)
+    return copia
+
+
 def _formatear_hoja(hoja, tabla: pd.DataFrame, colorear_estado: bool = False) -> None:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     hoja.freeze_panes = 'A2'
+    # El reporte no usa fórmulas propias: cualquier celda que haya quedado como
+    # fórmula se fuerza a texto (se muestra, pero Excel no la evalúa).
+    for fila in hoja.iter_rows():
+        for celda in fila:
+            if celda.data_type == 'f':
+                celda.data_type = 's'
     for celda in hoja[1]:
         celda.font = Font(bold=True)
     for posicion, columna in enumerate(tabla.columns, start=1):
@@ -2040,7 +2077,7 @@ def escribir_reportes(
                 ('Lista sin usar', sin_usar, False),
                 ('Resumen', tabla_resumen, False),
             ):
-                tabla.to_excel(libro, sheet_name=nombre, index=False)
+                _sin_formulas(tabla).to_excel(libro, sheet_name=nombre, index=False)
                 _formatear_hoja(libro.sheets[nombre], tabla, colorear)
         escritos.append(ruta)
 
@@ -2071,7 +2108,7 @@ def _numero_csv(valor: Any) -> str:
 
 
 def _para_csv(tabla: pd.DataFrame) -> pd.DataFrame:
-    copia = tabla.copy()
+    copia = _sin_formulas(tabla)
     for columna in copia.columns:
         if pd.api.types.is_numeric_dtype(copia[columna]):
             copia[columna] = copia[columna].map(_numero_csv)
@@ -2404,8 +2441,13 @@ def _ejecutar(args: argparse.Namespace, sello: str, dormir: Callable[[float], No
         log.info('Productos: %s (%s, sin conexión).', len(productos), args.productos_json.name)
     else:
         url = normalizar_url(args.url or os.environ.get(ENV_URL) or config.url or URL_DEFAULT)
-        if url.startswith('http://') and urlsplit(url).hostname not in ('localhost', '127.0.0.1'):
-            log.warning('La dirección es http://: en producción la cookie de sesión solo viaja por https://.')
+        # Por http:// el usuario y la contraseña del panel viajarían sin cifrar
+        # en el primer request (antes de cualquier redirección): se corta acá.
+        if url.startswith('http://') and urlsplit(url).hostname not in HOSTS_LOCALES:
+            raise ErrorConfig(
+                f'La dirección tiene que ser https:// (vino "{url}"): por http:// el usuario y la '
+                'contraseña del panel viajarían sin cifrar.'
+            )
         cliente = ClienteApi(url, reintentos=args.reintentos, dormir=dormir)
         if args.aplicar:
             usuario, password = obtener_credenciales(interactivo)

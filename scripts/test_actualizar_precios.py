@@ -1173,5 +1173,34 @@ class TestPuntaAPunta(Base):
         self.assertIn('códigos de salida:', texto)
 
 
+class TestSeguridad(unittest.TestCase):
+    """Hallazgos de la auditoría de seguridad."""
+
+    def test_nunca_manda_la_contrasena_por_http_a_otro_host(self):
+        cliente = ap.ClienteApi('http://elpampa.example', reintentos=0, dormir=lambda _segundos: None)
+        with mock.patch.object(cliente, '_pedir') as pedir:
+            with self.assertRaises(ap.ErrorLogin):
+                cliente.iniciar_sesion('admin', 'clave-que-no-tiene-que-salir')
+            pedir.assert_not_called()
+
+    def test_http_a_localhost_sigue_permitido_para_pruebas(self):
+        for url in ('http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000'):
+            cliente = ap.ClienteApi(url, reintentos=0, dormir=lambda _segundos: None)
+            with mock.patch.object(cliente, '_pedir') as pedir:
+                pedir.side_effect = ap.ErrorLogin('cortado a propósito')
+                with self.assertRaises(ap.ErrorLogin):
+                    cliente.iniciar_sesion('admin', 'x')
+                pedir.assert_called_once()
+
+    def test_textos_que_parecen_formulas_no_se_ejecutan_en_el_reporte(self):
+        tabla = pd.DataFrame([{'Renglón de la lista': '=HYPERLINK("https://evil.example","x")', 'Precio': 10}])
+        seguro = ap._sin_formulas(tabla)
+        self.assertTrue(seguro.iloc[0]['Renglón de la lista'].startswith("'="))
+        self.assertEqual(seguro.iloc[0]['Precio'], 10)
+        for prefijo in ('+', '-', '@'):
+            self.assertEqual(ap._texto_seguro(f'{prefijo}cmd'), f"'{prefijo}cmd")
+        self.assertEqual(ap._texto_seguro('Tomate'), 'Tomate')
+
+
 if __name__ == '__main__':
     unittest.main()
