@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Fecha inválida. Usá el formato AAAA-MM-DD.' }, { status: 400 });
   }
   const date = dateParam ?? getArgentinaParts().date;
-  const { dayStart, dayEnd, pickupCarryFrom, slotIds } = getOrdersDayRange(date);
+  const { dayStart, dayEnd, pickupCarryFrom, slotRange } = getOrdersDayRange(date);
 
   try {
     // Cada rama del OR usa un índice: createdAt, deliverySlot (por igualdad,
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
       where: {
         OR: [
           { createdAt: { gte: dayStart, lt: dayEnd } },
-          { deliverySlot: { in: slotIds } },
+          { deliverySlot: slotRange },
           { deliveryMethod: 'pickup', createdAt: { gte: pickupCarryFrom, lt: dayStart } },
         ],
       },

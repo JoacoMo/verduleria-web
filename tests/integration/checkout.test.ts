@@ -279,6 +279,37 @@ describeDb('POST /api/checkout: mínimo de envío, stock y precios', () => {
     expect(retry).toMatchObject({ orderId: data.orderId, yaExistia: true, priceDrops: [] });
   });
 
+  // Una baja que deja el subtotal debajo del envío gratis haría cobrar MÁS de lo
+  // que vio el cliente (se suma el envío): ahí se frena con 409 como una suba.
+  it('una baja que hace perder el envío gratis → 409 (nunca se cobra más de lo que vio)', async () => {
+    freezeTime(MONDAY_11AM);
+    const bolson = await createProduct({ price: 20000, offerPrice: 19000, unit: 'unidad', category: 'Bolsones' });
+    const payload = body({
+      cart: [{ id: bolson.id, quantity: 1, price: 20000 }],
+      deliveryMethod: 'delivery',
+      deliverySlot: '2026-10-05T19',
+    });
+    const response = await post(payload);
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toMatchObject({
+      code: 'PRECIOS_CAMBIARON',
+      priceChanges: [{ id: bolson.id, previousPrice: 20000, currentPrice: 19000 }],
+    });
+    expect(await ordersWithKey(payload.idempotencyKey as string)).toBe(0);
+  });
+
+  it('una baja que deja el envío debajo del mínimo → 409 (no un 400 que deja al cliente trabado)', async () => {
+    freezeTime(MONDAY_11AM);
+    const caja = await createProduct({ price: 10000, offerPrice: 9000, unit: 'unidad' });
+    const response = await post(body({
+      cart: [{ id: caja.id, quantity: 1, price: 10000 }],
+      deliveryMethod: 'delivery',
+      deliverySlot: '2026-10-05T19',
+    }));
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toMatchObject({ code: 'PRECIOS_CAMBIARON' });
+  });
+
   it('uno subió y otro bajó → 409 con los dos cambios (el carrito queda con el total real), sin crear pedido', async () => {
     const sube = await createProduct({ price: 1100 });
     const baja = await createProduct({ price: 2000, offerPrice: 1500 });
@@ -705,6 +736,11 @@ describeDb('POST /api/checkout: rate limit y topes de spam', () => {
       expect(created.orderId).toEqual(expect.any(Number));
       expect(await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] }))).toHaveProperty('status', 503);
       expect(await readJson(await post(payload))).toMatchObject({ orderId: created.orderId, yaExistia: true });
+
+      // Si el dueño cancela el spam desde el panel, la tienda vuelve a aceptar
+      // pedidos al instante: el tope global no cuenta los cancelados.
+      await prisma.order.updateMany({ where: { idempotencyKey: { startsWith: prefix } }, data: { status: 'cancelled' } });
+      expect(await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] }))).toHaveProperty('status', 200);
     } finally {
       await prisma.order.deleteMany({ where: { idempotencyKey: { startsWith: prefix } } });
     }

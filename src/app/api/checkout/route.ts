@@ -143,7 +143,14 @@ async function checkOrderCaps(request: Request, customerPhone: string, now: Date
         status: { not: 'cancelled' },
       },
     }),
-    prisma.order.count({ where: { createdAt: { gte: new Date(now.getTime() - ORDER_CAPS.global.windowMs) } } }),
+    // Sin los cancelados: si llega spam y el dueño lo cancela desde el panel, la
+    // tienda vuelve a aceptar pedidos al instante (igual que el tope por teléfono).
+    prisma.order.count({
+      where: {
+        createdAt: { gte: new Date(now.getTime() - ORDER_CAPS.global.windowMs) },
+        status: { not: 'cancelled' },
+      },
+    }),
   ]);
 
   const ip = getClientIp(request);
@@ -266,7 +273,25 @@ export async function POST(request: Request) {
     // carrito quede con el total que de verdad se va a cobrar.
     const priceChanges = detectPriceChanges(cart, lines);
     const { increases, drops: priceDrops } = splitPriceChanges(priceChanges);
-    if (increases.length > 0) {
+
+    // Una baja también puede terminar cobrando MÁS: si deja el subtotal debajo
+    // del umbral de envío gratis, se empieza a cobrar el envío; si lo deja
+    // debajo del mínimo, el pedido no se puede hacer. Se comparan los totales
+    // con los precios que vio el cliente y, si el total sube o el mínimo deja de
+    // alcanzar, se frena igual que con una suba (el carrito se actualiza).
+    const seenPrice = new Map(priceChanges.map((change) => [change.id, change.previousPrice]));
+    const seenTotals = computeTotals(
+      lines.map((line) => ({ ...line, price: seenPrice.get(line.id) ?? line.price })),
+      isDelivery,
+      siteConfig,
+    );
+    const currentTotals = computeTotals(lines, isDelivery, siteConfig);
+    const dropsChangeTheDeal = priceDrops.length > 0 && (
+      currentTotals.total > seenTotals.total
+      || (currentTotals.belowDeliveryMinimum && !seenTotals.belowDeliveryMinimum)
+    );
+
+    if (increases.length > 0 || dropsChangeTheDeal) {
       return NextResponse.json(
         {
           error: 'Cambiaron algunos precios mientras armabas el pedido. Revisá el carrito antes de confirmar.',
@@ -278,7 +303,7 @@ export async function POST(request: Request) {
     }
 
     // ---- 5. Totales y mínimo de envío (sobre el subtotal, sin el envío) ----
-    const totals = computeTotals(lines, isDelivery, siteConfig);
+    const totals = currentTotals;
 
     // Defensa en profundidad: la validación del panel ya no deja guardar precios
     // de $ 0, pero si alguno quedó cargado de antes no se registra un pedido gratis.

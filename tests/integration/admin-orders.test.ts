@@ -102,14 +102,18 @@ describeDb('GET /api/gestion/orders', () => {
     }
   });
 
-  it('el turno se busca por igualdad: un turno que no es de ese día (aunque empiece igual) no aparece', async () => {
+  // Por rango de ids del día y no por igualdad contra las franjas actuales: si
+  // algún día cambian los horarios, un envío tomado con la franja vieja tiene
+  // que seguir apareciendo en su día (y no en otro).
+  it('el turno se busca por rango del día: una franja vieja aparece en su día y la de otro día no', async () => {
     const real = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-20T19', customerAddress: 'Calle 1' });
-    const bogus = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-20T15', customerAddress: 'Calle 1' });
+    const oldWindow = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-20T15', customerAddress: 'Calle 1' });
+    const otherDay = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-21T13', customerAddress: 'Calle 1' });
     try {
       const day = await idsOf(await list('?date=2031-02-20'));
-      expect(day).toEqual([real.id]);
+      expect(day.sort()).toEqual([real.id, oldWindow.id].sort());
     } finally {
-      await prisma.order.deleteMany({ where: { id: { in: [real.id, bogus.id] } } });
+      await prisma.order.deleteMany({ where: { id: { in: [real.id, oldWindow.id, otherDay.id] } } });
     }
   });
 

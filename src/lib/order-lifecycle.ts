@@ -235,8 +235,13 @@ export type OrdersDayRange = {
    * antes, como el domingo a las 14:00) se preparan al día siguiente.
    */
   pickupCarryFrom: Date;
-  /** Ids de los turnos de entrega del día, para buscarlos por igualdad (usa el índice). */
-  slotIds: string[];
+  /**
+   * Rango de ids de turno del día ("YYYY-MM-DDT00" a "YYYY-MM-DDT23"). Por rango
+   * y no por igualdad contra las franjas actuales: si algún día cambian los
+   * horarios, los envíos ya tomados con la franja vieja siguen apareciendo en su
+   * día. Usa el índice de deliverySlot igual.
+   */
+  slotRange: { gte: string; lte: string };
 };
 
 /**
@@ -255,7 +260,7 @@ export function getOrdersDayRange(date: string): OrdersDayRange {
     dayStart,
     dayEnd,
     pickupCarryFrom,
-    slotIds: DELIVERY_WINDOWS.map(({ start }) => slotIdFor(date, start)),
+    slotRange: { gte: slotIdFor(date, 0), lte: `${date}T23` },
   };
 }
 

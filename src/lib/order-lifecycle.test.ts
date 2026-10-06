@@ -204,7 +204,7 @@ describe('getOrdersDayRange', () => {
       dayEnd: new Date('2026-10-06T03:00:00.000Z'),
       // Domingo 4/10 a las 14:00 de Córdoba: el local cerró y lo que entra se arma el lunes.
       pickupCarryFrom: new Date('2026-10-04T17:00:00.000Z'),
-      slotIds: ['2026-10-05T13', '2026-10-05T19'],
+      slotRange: { gte: '2026-10-05T00', lte: '2026-10-05T23' },
     });
   });
 
@@ -215,7 +215,7 @@ describe('getOrdersDayRange', () => {
   it('domingo: los retiros del sábado desde las 19:00', () => {
     const range = getOrdersDayRange('2026-10-11');
     expect(range.pickupCarryFrom).toEqual(new Date('2026-10-10T22:00:00.000Z'));
-    expect(range.slotIds).toEqual(['2026-10-11T13', '2026-10-11T19']);
+    expect(range.slotRange).toEqual({ gte: '2026-10-11T00', lte: '2026-10-11T23' });
   });
 
   it('cambio de mes y de año', () => {
@@ -223,7 +223,7 @@ describe('getOrdersDayRange', () => {
       dayStart: new Date('2027-01-01T03:00:00.000Z'),
       // Jueves 31/12 a las 19:00.
       pickupCarryFrom: new Date('2026-12-31T22:00:00.000Z'),
-      slotIds: ['2027-01-01T13', '2027-01-01T19'],
+      slotRange: { gte: '2027-01-01T00', lte: '2027-01-01T23' },
     });
   });
 });
