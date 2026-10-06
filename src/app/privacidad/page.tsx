@@ -15,7 +15,7 @@ export default function PrivacidadPage() {
     <main className="legal-page">
       <Link href="/" className="back-link">← Volver a la tienda</Link>
       <h1>Política de Privacidad</h1>
-      <p className="legal-updated">Última actualización: 5 de octubre de 2026</p>
+      <p className="legal-updated">Última actualización: 6 de octubre de 2026</p>
 
       <p>
         Esta política explica qué información recopila {siteConfig.storeName} cuando hacés un pedido a través del
@@ -65,9 +65,10 @@ export default function PrivacidadPage() {
 
       <h2>Cuánto tiempo se guardan</h2>
       <p>
-        Un pedido que queda pendiente de pago durante {STALE_PENDING_DAYS} días se cancela. Los pedidos cancelados o que
-        no se concretaron se borran, con todos sus datos, a los {CLOSED_ORDER_RETENTION_DAYS} días de hechos. Los pedidos
-        pagados se conservan como registro de ventas del local.
+        Un pedido por transferencia que queda pendiente de pago durante {STALE_PENDING_DAYS} días se cancela, salvo que ya
+        lo hayamos pesado. Los pedidos en efectivo, o que ya pesamos, se conservan hasta que los marquemos como pagados o
+        cancelados. Los pedidos cancelados se borran, con todos sus datos, a los {CLOSED_ORDER_RETENTION_DAYS} días de
+        cancelados. Los pedidos pagados se conservan como registro de ventas del local.
       </p>
 
       <h2>Qué queda guardado en tu navegador</h2>

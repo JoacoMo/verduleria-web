@@ -205,6 +205,34 @@ describe('parseProductPayload (crear)', () => {
     expect(errorOf(() => parseProductPayload({ ...base, description: 5 })).message).toBe('La descripción tiene que ser texto.');
   });
 
+  it('descripción: espacios y tabs al final de cada renglón se sacan; los del principio quedan', () => {
+    expect(parseProductPayload({ ...base, description: 'Papa \t \n  Cebolla\t\n \t \n\t\nZanahoria  ' }).description).toBe('Papa\n  Cebolla\n\nZanahoria');
+    expect(parseProductPayload({ ...base, description: '2 kg papa\n\n1 kg cebolla' }).description).toBe('2 kg papa\n\n1 kg cebolla');
+    // Un texto que con espacios al final pasa de 500 pero limpio no, entra.
+    expect(parseProductPayload({ ...base, description: `${'x'.repeat(250)}${' '.repeat(400)}\n${'y'.repeat(240)}` }).description).toHaveLength(491);
+  });
+
+  // Era un ReDoS: /[ \t]+\n/g sobre "a" + 99.000 espacios + "a" bloqueaba el
+  // proceso ~4,5 s antes de llegar al chequeo de largo.
+  it.each([
+    ['100 KB de espacios', ' '.repeat(100 * 1024)],
+    ['"a" + 99.000 espacios + "a"', `a${' '.repeat(99_000)}a`],
+    ['"a" + 99.000 tabs + "a"', `a${'\t'.repeat(99_000)}a`],
+    ['renglones de espacios', ' \n'.repeat(50_000)],
+  ])('descripción gigante (%s) → error de largo al instante', (_case, description) => {
+    const started = performance.now();
+    const error = errorOf(() => parseProductPayload({ ...base, description }));
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(error.message).toBe(`La descripción puede tener hasta 500 caracteres (tiene ${description.length}).`);
+  });
+
+  it('descripción de hasta 2000 caracteres crudos (con espacios de sobra) todavía se limpia y se mide', () => {
+    const started = performance.now();
+    const error = errorOf(() => parseProductPayload({ ...base, description: `a${' '.repeat(1998)}a` }));
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(error.message).toBe('La descripción puede tener hasta 500 caracteres (tiene 2000).');
+  });
+
   it('disponibilidad: boolean estricto, por defecto true', () => {
     expect(parseProductPayload({ ...base, available: false }).available).toBe(false);
     expect(errorOf(() => parseProductPayload({ ...base, available: 'false' })).message).toBe('La disponibilidad debe ser verdadero o falso.');
@@ -513,29 +541,47 @@ describe('parseCheckoutCart', () => {
 });
 
 describe('parseOrderAdjustment', () => {
-  it('lista de { id, quantity }', () => {
-    expect(parseOrderAdjustment({ items: [{ id: 1, quantity: 1.35 }, { id: '2', quantity: '0' }] })).toEqual([
-      { id: 1, quantity: 1.35 },
-      { id: 2, quantity: 0 },
-    ]);
-    expect(parseOrderAdjustment({ items: [] })).toEqual([]);
+  const VERSION = '2026-10-06T14:05:09.123Z';
+
+  it('lista de { id, quantity } y la versión del pedido que vio el panel', () => {
+    expect(parseOrderAdjustment({ items: [{ id: 1, quantity: 1.35 }, { id: '2', quantity: '0' }], expectedUpdatedAt: VERSION })).toEqual({
+      items: [
+        { id: 1, quantity: 1.35 },
+        { id: 2, quantity: 0 },
+      ],
+      expectedUpdatedAt: new Date(VERSION),
+    });
+    expect(parseOrderAdjustment({ items: [], expectedUpdatedAt: VERSION }).items).toEqual([]);
+    // Con offset también (mismo instante).
+    expect(parseOrderAdjustment({ items: [], expectedUpdatedAt: '2026-10-06T11:05:09.123-03:00' }).expectedUpdatedAt).toEqual(new Date(VERSION));
   });
 
   it('errores de forma', () => {
     for (const payload of [null, {}, { items: 'x' }]) {
       expect(errorOf(() => parseOrderAdjustment(payload)).message).toBe('Mandá la lista de productos del pedido con sus cantidades.');
     }
-    expect(errorOf(() => parseOrderAdjustment({ items: Array.from({ length: 101 }, (_, i) => ({ id: i + 1, quantity: 1 })) })).message).toBe('El pedido tiene demasiados productos.');
-    expect(errorOf(() => parseOrderAdjustment({ items: [null] })).message).toBe('Hay un producto sin id válido.');
-    expect(errorOf(() => parseOrderAdjustment({ items: [{ id: 1.5, quantity: 1 }] })).message).toBe('Hay un producto sin id válido.');
-    expect(errorOf(() => parseOrderAdjustment({ items: [{ id: 1, quantity: 1 }, { id: 1, quantity: 2 }] })).message).toBe('Un producto aparece dos veces en el ajuste.');
+    const withVersion = (items: unknown) => ({ items, expectedUpdatedAt: VERSION });
+    expect(errorOf(() => parseOrderAdjustment(withVersion(Array.from({ length: 101 }, (_, i) => ({ id: i + 1, quantity: 1 }))))).message).toBe('El pedido tiene demasiados productos.');
+    expect(errorOf(() => parseOrderAdjustment(withVersion([null]))).message).toBe('Hay un producto sin id válido.');
+    expect(errorOf(() => parseOrderAdjustment(withVersion([{ id: 1.5, quantity: 1 }]))).message).toBe('Hay un producto sin id válido.');
+    expect(errorOf(() => parseOrderAdjustment(withVersion([{ id: 1, quantity: 1 }, { id: 1, quantity: 2 }]))).message).toBe('Un producto aparece dos veces en el ajuste.');
   });
 
   it.each([-1, 'mucho', Number.NaN, Number.POSITIVE_INFINITY, 1_000_001, null, undefined])('cantidad inválida: %s', (quantity) => {
-    expect(errorOf(() => parseOrderAdjustment({ items: [{ id: 1, quantity }] })).message).toBe(
+    expect(errorOf(() => parseOrderAdjustment({ items: [{ id: 1, quantity }], expectedUpdatedAt: VERSION })).message).toBe(
       'La cantidad de cada producto tiene que ser un número mayor o igual a 0.',
     );
   });
+
+  // Sin la versión, el servidor no puede saber si el editor estaba viejo: se exige.
+  it.each([undefined, null, '', 'ayer', '2026-10-06', '2026-10-06 14:05:09', '2026-13-40T99:99:99Z', 1759759509123, {}])(
+    'expectedUpdatedAt faltante o inválido: %s',
+    (expectedUpdatedAt) => {
+      expect(errorOf(() => parseOrderAdjustment({ items: [{ id: 1, quantity: 1 }], expectedUpdatedAt })).message).toBe(
+        'Falta la versión del pedido que estabas editando. Recargá el panel y volvé a cargar los pesos.',
+      );
+    },
+  );
 });
 
 describe('detectImageType', () => {

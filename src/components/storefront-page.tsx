@@ -2,6 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
+import dynamic from 'next/dynamic';
 import { Leaf, RotateCw } from 'lucide-react';
 import { computeTotals } from '@/lib/pricing';
 import { PRODUCT_CATEGORIES, type CategoryFilter } from '@/lib/product-categories';
@@ -15,19 +16,21 @@ import {
   type ProductUnit,
 } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
-import { isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
+import { describePickupReady, isStoreOpenNow } from '@/lib/store-hours';
 import type { CheckoutResponse, OrderItem, Product, StoreInfo } from '@/lib/types';
+import { buildWhatsappUrl } from '@/lib/whatsapp';
 import BolsonesSection from './storefront/bolsones-section';
-import CartDrawer from './storefront/cart-drawer';
+import type { CartDrawerProps } from './storefront/cart-drawer';
+import CartDrawerUnavailable from './storefront/cart-drawer-unavailable';
 import CartFab from './storefront/cart-fab';
 import CatalogFilters from './storefront/catalog-filters';
 import { applyPriceChanges, markUnavailable } from './storefront/catalog-updates';
-import { createIdempotencyKey, postCheckout, type CheckoutOutcome } from './storefront/checkout-api';
-import { focusCheckoutField } from './storefront/checkout-form';
+import type { CheckoutOutcome } from './storefront/checkout-api';
+import { focusCheckoutField } from './storefront/checkout-focus';
 import ContactSection from './storefront/contact-section';
 import { pluralize } from './storefront/format';
 import Hero, { type StorefrontHeading } from './storefront/hero';
-import { buildOrderWhatsappUrl } from './storefront/order-message';
+import type { buildOrderWhatsappUrl } from './storefront/order-message';
 import ProductGrid from './storefront/product-grid';
 import SiteFooter from './storefront/site-footer';
 import SiteNav from './storefront/site-nav';
@@ -35,7 +38,7 @@ import StoreRules from './storefront/store-rules';
 import { Toast, useToast } from './storefront/toast';
 import { useCart } from './storefront/use-cart';
 import { useCheckoutForm } from './storefront/use-checkout-form';
-import { useClientClock } from './storefront/use-client-clock';
+import { correctedNow, useClientClock } from './storefront/use-client-clock';
 import { useDeliverySlots } from './storefront/use-delivery-slots';
 import { useProductPricing } from './storefront/use-product-pricing';
 import type { CheckoutNotice, CheckoutStep, OrderConfirmationData, ProductPriceView } from './storefront/types';
@@ -55,6 +58,13 @@ export type StorefrontPageProps = {
   heading?: StorefrontHeading;
   /** Contenido de servidor que va después del catálogo (sobre el local, preguntas frecuentes). */
   infoSection?: ReactNode;
+  /**
+   * Hora (ms) con la que el servidor armó la página. El primer render del
+   * navegador usa esta misma hora, así el HTML coincide aunque el reloj del
+   * celular esté corrido (si no, React tira el error #418 y vuelve a dibujar
+   * todo), y sirve para corregir ese reloj (useClientClock).
+   */
+  renderedAt?: number;
 };
 
 const INITIAL_VISIBLE_PRODUCTS = 8;
@@ -83,6 +93,27 @@ function openBlankTab() {
   }
 }
 
+/**
+ * El carrito y el checkout van en un chunk aparte (cart-drawer-chunk.ts): son
+ * casi la mitad del JS propio de la página y no se usan hasta abrir el carrito.
+ * Se precargan con el primer producto agregado o al acercarse al botón.
+ *
+ * Si el chunk no se puede bajar (sin señal, o una versión nueva de la tienda
+ * borró el archivo de la anterior), en vez de romper la página se muestra un
+ * aviso para recargar: el carrito está guardado en el navegador.
+ */
+const loadCartChunk = () => import('./storefront/cart-drawer-chunk');
+
+const CartDrawer = dynamic<CartDrawerProps>(
+  () => import('./storefront/cart-drawer-chunk').catch((error: unknown) => {
+    console.error('No se pudo cargar el carrito:', error);
+    return { default: CartDrawerUnavailable };
+  }),
+  { ssr: false },
+);
+
+const CONTACT_MESSAGE = '¡Hola! Quise hacer un pedido por la web y no me dejó confirmarlo.';
+
 const NETWORK_ERROR_MESSAGE = 'Parece que se cortó la conexión. Revisá la señal y tocá «Confirmar pedido» de nuevo: si el pedido ya había llegado, no se duplica.';
 const SERVER_ERROR_MESSAGE = 'Tuvimos un problema al registrar el pedido. Probá de nuevo en un ratito o escribinos por WhatsApp.';
 
@@ -97,16 +128,18 @@ export default function StorefrontPage({
   initialCategory = 'Todas',
   heading,
   infoSection,
+  renderedAt,
 }: StorefrontPageProps) {
   // Catálogo en memoria: arranca con lo que vino del servidor y solo cambia si el
   // checkout avisa que cambió un precio o que algo se quedó sin stock.
   const [products, setProducts] = useState<Product[]>(initialProducts);
 
-  // La hora para las ofertas: en el primer render la del momento (igual en el
-  // servidor y en el navegador salvo justo en el vencimiento) y, ya montado, la
-  // del reloj del cliente, que se actualiza cada minuto.
-  const clientNow = useClientClock();
-  const [renderNow] = useState(() => new Date());
+  // La hora para las ofertas: en el primer render, la del servidor (renderedAt),
+  // así el navegador dibuja exactamente el mismo HTML aunque su reloj esté mal;
+  // ya montado, la del reloj del cliente (corregido si estaba corrido), que se
+  // actualiza cada minuto.
+  const clientNow = useClientClock(renderedAt);
+  const [renderNow] = useState(() => new Date(renderedAt ?? Date.now()));
   const now = clientNow ?? renderNow;
 
   const pricing = useProductPricing(products, now);
@@ -116,6 +149,9 @@ export default function StorefrontPage({
   const { toast, showToast } = useToast();
 
   const [isCartOpen, setIsCartOpen] = useState(false);
+  // El panel se monta (cerrado) cuando su chunk ya está, o al abrirlo.
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  const cartChunkRequestedRef = useRef(false);
   const [checkoutStep, setCheckoutStep] = useState<CheckoutStep>('cart');
   const [searchQuery, setSearchQuery] = useState('');
   // El filtrado usa el valor diferido: en un celular lento escribir en el
@@ -161,7 +197,7 @@ export default function StorefrontPage({
   const totalWeightKg = useMemo(() => items.reduce((sum, item) => sum + lineWeightKg(item), 0), [items]);
 
   const storeStatus = useMemo(
-    () => (clientNow ? { open: isStoreOpenNow(clientNow), pastCutoff: isPastOrderCutoff(clientNow) } : null),
+    () => (clientNow ? { open: isStoreOpenNow(clientNow), pickupReady: describePickupReady(clientNow) } : null),
     [clientNow],
   );
 
@@ -189,9 +225,9 @@ export default function StorefrontPage({
     return matchesSearch(product.name, query) || (product.description ? matchesSearch(product.description, query) : false);
   }), [products, pricing, activeCategory, query, showBolsonesSection]);
 
-  const visibleProducts = isSearching || showAllProducts
-    ? filteredProducts
-    : filteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
+  // Se dibujan todos (el HTML trae el catálogo completo); los que pasan del
+  // límite van plegados hasta "Ver todos los productos".
+  const collapseAfter = isSearching || showAllProducts ? null : INITIAL_VISIBLE_PRODUCTS;
   const hasMoreProducts = !isSearching && !showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
 
   // ---- Sugerencias del carrito ----
@@ -219,7 +255,37 @@ export default function StorefrontPage({
 
   // ---- Acciones (estables: bajan a tarjetas memorizadas) ----
 
-  const openCart = useCallback(() => setIsCartOpen(true), []);
+  /** Baja el chunk del carrito (una vez) y, cuando está, monta el panel cerrado. */
+  const preloadCart = useCallback(() => {
+    if (cartChunkRequestedRef.current) return;
+    cartChunkRequestedRef.current = true;
+    loadCartChunk().then(
+      () => setDrawerRequested(true),
+      () => {
+        // Se reintenta en el próximo gesto; si al abrir sigue fallando, el
+        // panel muestra el aviso para recargar.
+        cartChunkRequestedRef.current = false;
+      },
+    );
+  }, []);
+
+  // Con el primer producto en el carrito (o un carrito guardado) se precarga,
+  // sin competir con la carga de la página.
+  const hasItems = items.length > 0;
+  useEffect(() => {
+    if (!hasItems) return;
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(preloadCart, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(preloadCart, 200);
+    return () => window.clearTimeout(id);
+  }, [hasItems, preloadCart]);
+
+  const openCart = useCallback(() => {
+    setDrawerRequested(true);
+    setIsCartOpen(true);
+  }, []);
   const closeCart = useCallback(() => setIsCartOpen(false), []);
 
   const handleAdjustGrid = useCallback((productId: number, unit: ProductUnit, direction: 1 | -1) => {
@@ -256,6 +322,7 @@ export default function StorefrontPage({
     }
     setConfirmation(null);
     setCheckoutStep('cart');
+    setDrawerRequested(true);
     setIsCartOpen(true);
     showToast(result.missing > 0
       ? `Cargamos tu último pedido (${result.missing} ${pluralize(result.missing, 'producto', 'productos')} sin stock hoy)`
@@ -272,9 +339,10 @@ export default function StorefrontPage({
   function handleCheckoutFailure(outcome: Exclude<CheckoutOutcome, { kind: 'ok' }>) {
     switch (outcome.kind) {
       case 'price-changed':
+        // Solo llega si algo SUBIÓ (si bajó, el pedido se crea con el precio menor).
         // El carrito toma el precio del catálogo, así que con actualizar el
         // catálogo ya se ve el total nuevo. No se registró nada: confirma de nuevo.
-        setProducts((current) => applyPriceChanges(current, outcome.changes, new Date()));
+        setProducts((current) => applyPriceChanges(current, outcome.changes, correctedNow()));
         setNotice({ kind: 'price-changed', changes: outcome.changes });
         break;
       case 'unavailable':
@@ -287,6 +355,16 @@ export default function StorefrontPage({
         window.requestAnimationFrame(() => focusCheckoutField('deliverySlot'));
         break;
       case 'rate-limited':
+      case 'busy':
+        // Topes contra el spam (muchos intentos, muchos pedidos con el mismo
+        // teléfono o demasiados pedidos en la última hora): el mensaje del
+        // servidor y WhatsApp a mano, para no perder un pedido de verdad.
+        setNotice({
+          kind: 'error',
+          message: outcome.message,
+          contactUrl: buildWhatsappUrl(storeInfo.whatsappNumber, CONTACT_MESSAGE),
+        });
+        break;
       case 'invalid':
         setNotice({ kind: 'error', message: outcome.message });
         break;
@@ -301,7 +379,11 @@ export default function StorefrontPage({
     }
   }
 
-  function handleCheckoutSuccess(order: CheckoutResponse, waTab: Window | null) {
+  function handleCheckoutSuccess(
+    order: CheckoutResponse,
+    waTab: Window | null,
+    buildWhatsappLink: typeof buildOrderWhatsappUrl,
+  ) {
     // El pedido quedó registrado: el próximo checkout es otra compra.
     checkoutKeyRef.current = null;
 
@@ -311,9 +393,15 @@ export default function StorefrontPage({
       : items.map(({ id, name, unitPrice, quantity, unit }) => ({ id, name, price: unitPrice, quantity, unit }));
     const finalOrder: CheckoutResponse = { ...order, items: orderItems };
     const hasWeight = orderItems.some((item) => isWeightUnit(item.unit));
-    const customerAddress = finalOrder.deliveryMethod === 'delivery' ? form.values.customerAddress.trim() : null;
+    const isDeliveryOrder = finalOrder.deliveryMethod === 'delivery';
+    const customerAddress = isDeliveryOrder ? form.values.customerAddress.trim() : null;
+    const orderTime = correctedNow();
+    // Cuándo está listo un retiro ("mañana desde las 8:00"), con la hora de ahora:
+    // se fija acá y no cambia mientras el cliente mira la confirmación.
+    const pickupReady = isDeliveryOrder ? null : describePickupReady(orderTime);
+    const { priceDrops } = finalOrder;
 
-    const whatsappUrl = buildOrderWhatsappUrl(finalOrder.whatsappNumber || storeInfo.whatsappNumber, {
+    const whatsappUrl = buildWhatsappLink(finalOrder.whatsappNumber || storeInfo.whatsappNumber, {
       orderId: finalOrder.orderId,
       storeName: finalOrder.storeName || storeInfo.storeName,
       customerName: form.values.customerName,
@@ -325,6 +413,7 @@ export default function StorefrontPage({
       customerAddress,
       deliverySlotId: finalOrder.deliverySlot?.id ?? null,
       deliverySlotLabel: finalOrder.deliverySlot?.label ?? null,
+      pickupReady,
       paymentMethod: finalOrder.paymentMethod,
       replacementPolicy: form.values.replacementPolicy,
       notes: form.values.notes,
@@ -335,7 +424,13 @@ export default function StorefrontPage({
     form.rememberAndReset();
     slots.clearSelection();
 
-    setConfirmation({ order: finalOrder, whatsappUrl, hasWeightItems: hasWeight, customerAddress });
+    // Si algo bajó de precio, el catálogo en memoria pasa a mostrar el precio
+    // con el que se cobró (la confirmación lo avisa).
+    if (priceDrops.length > 0) {
+      setProducts((current) => applyPriceChanges(current, priceDrops, orderTime));
+    }
+
+    setConfirmation({ order: finalOrder, whatsappUrl, hasWeightItems: hasWeight, customerAddress, pickupReady });
     setCheckoutStep('cart');
     cart.clearCart();
 
@@ -360,14 +455,20 @@ export default function StorefrontPage({
     }
 
     setNotice(null);
-    if (!checkoutKeyRef.current) checkoutKeyRef.current = createIdempotencyKey();
-    const idempotencyKey = checkoutKeyRef.current;
+    // La pestaña de WhatsApp se abre ACÁ, en el mismo gesto del toque y antes de
+    // cualquier await (después el navegador la bloquearía como popup).
     const waTab = openBlankTab();
 
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      const outcome = await postCheckout({
+      // El formulario vive en el chunk del carrito, así que ya está cargado:
+      // esto no agrega ningún viaje de red.
+      const checkout = await loadCartChunk();
+      if (!checkoutKeyRef.current) checkoutKeyRef.current = checkout.createIdempotencyKey();
+      const idempotencyKey = checkoutKeyRef.current;
+
+      const outcome = await checkout.postCheckout({
         cart: items.map((item) => ({ id: item.id, quantity: item.quantity, price: item.unitPrice })),
         deliveryMethod: form.deliveryMethod,
         deliverySlot: form.isDelivery ? slots.selectedSlot?.id ?? null : null,
@@ -377,7 +478,7 @@ export default function StorefrontPage({
       });
 
       if (outcome.kind === 'ok') {
-        handleCheckoutSuccess(outcome.data, waTab);
+        handleCheckoutSuccess(outcome.data, waTab, checkout.buildOrderWhatsappUrl);
       } else {
         waTab?.close();
         handleCheckoutFailure(outcome);
@@ -396,13 +497,28 @@ export default function StorefrontPage({
   return (
     <>
       <SiteNav storeInfo={storeInfo} />
-      <Hero storeInfo={storeInfo} heading={heading} cartCount={items.length} onOpenCart={openCart} />
+      <Hero
+        storeInfo={storeInfo}
+        heading={heading}
+        cartCount={items.length}
+        onOpenCart={openCart}
+        onCartIntent={preloadCart}
+      />
 
       <main className="container">
         <StoreRules storeInfo={storeInfo} nextSlot={slots.nextSlot} />
 
+        {/* Sale de localStorage (después de montar): va flotando junto al botón
+            del carrito (position: fixed) para no empujar la página al aparecer. */}
         {cart.lastOrderLines.length > 0 && items.length === 0 ? (
-          <button type="button" className="repeat-order-btn" onClick={handleRepeatLastOrder}>
+          <button
+            type="button"
+            className="repeat-order-btn repeat-order-chip"
+            onClick={handleRepeatLastOrder}
+            onPointerEnter={preloadCart}
+            onPointerDown={preloadCart}
+            onFocus={preloadCart}
+          >
             <RotateCw size={18} aria-hidden="true" /> Repetir mi último pedido
           </button>
         ) : null}
@@ -445,7 +561,8 @@ export default function StorefrontPage({
             </p>
           ) : (
             <ProductGrid
-              products={visibleProducts}
+              products={filteredProducts}
+              collapseAfter={collapseAfter}
               pricing={pricing}
               now={now}
               gridQuantities={gridQuantities}
@@ -474,37 +591,39 @@ export default function StorefrontPage({
         {infoSection}
       </main>
 
-      <CartDrawer
-        isOpen={isCartOpen}
-        onClose={closeCart}
-        step={checkoutStep}
-        onStepChange={setCheckoutStep}
-        storeInfo={storeInfo}
-        items={items}
-        totals={totals}
-        hasWeightItems={hasWeightItems}
-        totalWeightKg={totalWeightKg}
-        form={form}
-        slots={slots}
-        pricing={pricing}
-        suggestedBolson={suggestedBolson}
-        relatedProducts={relatedProducts}
-        onAddSuggestion={handleAddSuggestion}
-        onSetQuantity={cart.setQuantity}
-        onRemove={cart.removeFromCart}
-        hasLastOrder={cart.lastOrderLines.length > 0}
-        onRepeatLastOrder={handleRepeatLastOrder}
-        notice={notice}
-        isSubmitting={isSubmitting}
-        onSubmit={handleSubmit}
-        confirmation={confirmation}
-        onFinishConfirmation={handleFinishConfirmation}
-        imagesById={imagesById}
-      />
+      {drawerRequested || isCartOpen ? (
+        <CartDrawer
+          isOpen={isCartOpen}
+          onClose={closeCart}
+          step={checkoutStep}
+          onStepChange={setCheckoutStep}
+          storeInfo={storeInfo}
+          items={items}
+          totals={totals}
+          hasWeightItems={hasWeightItems}
+          totalWeightKg={totalWeightKg}
+          form={form}
+          slots={slots}
+          pricing={pricing}
+          suggestedBolson={suggestedBolson}
+          relatedProducts={relatedProducts}
+          onAddSuggestion={handleAddSuggestion}
+          onSetQuantity={cart.setQuantity}
+          onRemove={cart.removeFromCart}
+          hasLastOrder={cart.lastOrderLines.length > 0}
+          onRepeatLastOrder={handleRepeatLastOrder}
+          notice={notice}
+          isSubmitting={isSubmitting}
+          onSubmit={handleSubmit}
+          confirmation={confirmation}
+          onFinishConfirmation={handleFinishConfirmation}
+          imagesById={imagesById}
+        />
+      ) : null}
 
-      <CartFab count={items.length} subtotal={totals.subtotal} onOpen={openCart} />
+      <CartFab count={items.length} subtotal={totals.subtotal} onOpen={openCart} onIntent={preloadCart} />
 
-      <Toast toast={toast} />
+      <Toast toast={toast} overCart={isCartOpen} />
 
       <SiteFooter storeInfo={storeInfo} />
     </>

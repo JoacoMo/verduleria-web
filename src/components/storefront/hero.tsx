@@ -11,6 +11,8 @@ type HeroProps = {
   heading?: StorefrontHeading;
   cartCount: number;
   onOpenCart: () => void;
+  /** Al acercarse al botón (mouse, toque o foco): precarga el carrito. */
+  onCartIntent?: () => void;
 };
 
 /**
@@ -19,7 +21,7 @@ type HeroProps = {
  * busca la gente. En las páginas de categoría la marca queda como adorno y el
  * h1 es el título propio de la página.
  */
-export default function Hero({ storeInfo, heading, cartCount, onOpenCart }: HeroProps) {
+export default function Hero({ storeInfo, heading, cartCount, onOpenCart, onCartIntent }: HeroProps) {
   const defaultTagline = `Frutas y verduras frescas por kilo, gramo o unidad, y bolsones armados. Retirá en el local o recibilo en tu casa de ${DELIVERY_WINDOWS_TEXT}.`;
 
   return (
@@ -58,6 +60,9 @@ export default function Hero({ storeInfo, heading, cartCount, onOpenCart }: Hero
           type="button"
           className="cart-icon"
           onClick={onOpenCart}
+          onPointerEnter={onCartIntent}
+          onPointerDown={onCartIntent}
+          onFocus={onCartIntent}
           aria-label={`Abrir carrito (${cartCount} ${cartCount === 1 ? 'producto' : 'productos'})`}
         >
           <ShoppingCart size={26} aria-hidden="true" />

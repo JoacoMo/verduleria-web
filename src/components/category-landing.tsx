@@ -186,6 +186,7 @@ export default async function CategoryLanding({ config, children }: CategoryLand
         initialCategory={config.category}
         heading={config.heading}
         infoSection={infoSection}
+        renderedAt={now.getTime()}
       />
     </>
   );

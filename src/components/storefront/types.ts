@@ -58,11 +58,14 @@ export type CheckoutNotice =
   | { kind: 'price-changed'; changes: PriceChange[] }
   | { kind: 'unavailable'; ids: number[] }
   | { kind: 'slot' }
-  | { kind: 'error'; message: string };
+  /** contactUrl: link a WhatsApp para seguir el pedido por ahí (topes anti-spam). */
+  | { kind: 'error'; message: string; contactUrl?: string };
 
 export type OrderConfirmationData = {
   order: CheckoutResponse;
   whatsappUrl: string;
   hasWeightItems: boolean;
   customerAddress: string | null;
+  /** Retiro: cuándo está listo ("hoy desde las 17:30"), calculado al confirmar. null si es envío. */
+  pickupReady: string | null;
 };

@@ -118,6 +118,11 @@ function applySecurityHeaders(response: NextResponse, csp: string) {
   // API de intereses publicitarios de Chrome (reemplazo de interest-cohort).
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), browsing-topics=()');
   response.headers.set('X-DNS-Prefetch-Control', 'off');
+  // Aísla la pestaña de las ventanas de otros sitios: una web que abra la tienda
+  // con window.open no se queda con una referencia a ella (ni puede navegarla).
+  // La pestaña de WhatsApp que abre el checkout igual carga: solo se pierde la
+  // referencia a ella una vez que navega a wa.me, y ya no se usa.
+  response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
 
   // HSTS: el navegador recuerda por dos años que el sitio va siempre por HTTPS, así
   // nadie en el medio (un Wi-Fi público) puede bajar la conexión a HTTP. Sin
@@ -209,7 +214,9 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Todo menos los assets estáticos de Next y el favicon.
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    // Todo menos los assets estáticos de Next. El favicon NO se excluye: el
+    // sitio usa src/app/icon.svg, así que /favicon.ico es un 404 que renderiza
+    // la página not-found, y sin el middleware salía sin CSP ni X-Frame-Options.
+    '/((?!_next/static|_next/image).*)',
   ],
 };

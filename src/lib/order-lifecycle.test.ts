@@ -4,9 +4,12 @@ import {
   OPEN_ORDER_STATUSES,
   ORDER_RECORD_SELECT,
   STALE_PENDING_DAYS,
+  MAX_OVERDUE_ORDERS,
   applyOrderAdjustment,
   describeStatusConflict,
+  firstSlotIdOf,
   getCleanupCutoffs,
+  getOrdersDayRange,
   isOrderStatus,
   parseStoredOrderItems,
   slotFromId,
@@ -125,15 +128,28 @@ describe('applyOrderAdjustment', () => {
     { id: 3, name: 'Nuez', price: 20, quantity: 200, unit: 'g' },
   ];
 
-  it('usa el precio guardado, normaliza las cantidades y recalcula sin tocar el envío', () => {
-    const result = applyOrderAdjustment(stored, [{ id: 1, quantity: 1.37 }, { id: 2, quantity: 2 }, { id: 3, quantity: 260 }], 4000);
+  it('usa el precio guardado, guarda el peso de la balanza (5 g) y recalcula sin tocar el envío', () => {
+    const result = applyOrderAdjustment(stored, [{ id: 1, quantity: 1.37 }, { id: 2, quantity: 2 }, { id: 3, quantity: 262 }], 4000);
     expect(result.items).toEqual([
-      { id: 1, name: 'Tomate', price: 1000, quantity: 1.35, unit: 'kg' },
+      { id: 1, name: 'Tomate', price: 1000, quantity: 1.37, unit: 'kg' },
       { id: 2, name: 'Acelga', price: 900, quantity: 2, unit: 'atado' },
-      { id: 3, name: 'Nuez', price: 20, quantity: 250, unit: 'g' },
+      { id: 3, name: 'Nuez', price: 20, quantity: 260, unit: 'g' },
     ]);
-    expect(result.subtotal).toBe(1350 + 1800 + 5000);
-    expect(result.total).toBe(1350 + 1800 + 5000 + 4000);
+    expect(result.subtotal).toBe(1370 + 1800 + 5200);
+    expect(result.total).toBe(1370 + 1800 + 5200 + 4000);
+  });
+
+  // Era un bug: el peso real se redondeaba a 50 g (11,237 kg → 11,25 kg) y el
+  // "total final" no era el de la balanza.
+  it('el peso real no se redondea a 50 g: 11,237 kg se cobra como 11,235 kg', () => {
+    const result = applyOrderAdjustment(stored, [{ id: 1, quantity: 11.237 }], 0);
+    expect(result.items).toEqual([{ id: 1, name: 'Tomate', price: 1000, quantity: 11.235, unit: 'kg' }]);
+    expect(result.total).toBe(11_235);
+  });
+
+  it('lo que va por unidad sigue siendo entero', () => {
+    const result = applyOrderAdjustment(stored, [{ id: 2, quantity: 1.4 }], 0);
+    expect(result.items).toEqual([{ id: 2, name: 'Acelga', price: 900, quantity: 1, unit: 'atado' }]);
   });
 
   it('cantidad 0 o ítem que no viene = se saca', () => {
@@ -162,19 +178,66 @@ describe('applyOrderAdjustment', () => {
 
   it('respeta el tope por unidad', () => {
     expect(() => applyOrderAdjustment(stored, [{ id: 1, quantity: 100.05 }], 0)).toThrow('La cantidad de Tomate es demasiado grande (máximo 100 kg).');
+    // Con la precisión de la balanza, 100,01 kg ya se pasa.
+    expect(() => applyOrderAdjustment(stored, [{ id: 1, quantity: 100.01 }], 0)).toThrow('La cantidad de Tomate es demasiado grande (máximo 100 kg).');
     expect(() => applyOrderAdjustment(stored, [{ id: 2, quantity: 101 }], 0)).toThrow('La cantidad de Acelga es demasiado grande (máximo 100 atados).');
-    // 100,01 kg se normaliza a 100 kg (precisión de 50 g) y entra justo.
-    expect(applyOrderAdjustment(stored, [{ id: 1, quantity: 100.01 }], 0).subtotal).toBe(100_000);
+    // 100,002 kg se normaliza a 100 kg (5 g) y entra justo.
+    expect(applyOrderAdjustment(stored, [{ id: 1, quantity: 100.002 }], 0).subtotal).toBe(100_000);
   });
 });
 
 describe('getCleanupCutoffs', () => {
-  it('7 días para los pendientes y 90 para los cerrados', () => {
+  it('7 días para los abiertos y 90 para los cancelados', () => {
     expect(STALE_PENDING_DAYS).toBe(7);
     expect(CLOSED_ORDER_RETENTION_DAYS).toBe(90);
     expect(getCleanupCutoffs(NOW)).toEqual({
-      cancelPendingBefore: new Date('2026-09-28T15:00:00.000Z'),
-      deleteClosedBefore: new Date('2026-07-07T15:00:00.000Z'),
+      cancelStaleBefore: new Date('2026-09-28T15:00:00.000Z'),
+      deleteCancelledBefore: new Date('2026-07-07T15:00:00.000Z'),
     });
+  });
+});
+
+describe('getOrdersDayRange', () => {
+  it('lunes: el día en hora argentina, sus dos turnos y los retiros del domingo desde las 14:00 (cierre)', () => {
+    expect(getOrdersDayRange('2026-10-05')).toEqual({
+      dayStart: new Date('2026-10-05T03:00:00.000Z'),
+      dayEnd: new Date('2026-10-06T03:00:00.000Z'),
+      // Domingo 4/10 a las 14:00 de Córdoba: el local cerró y lo que entra se arma el lunes.
+      pickupCarryFrom: new Date('2026-10-04T17:00:00.000Z'),
+      slotIds: ['2026-10-05T13', '2026-10-05T19'],
+    });
+  });
+
+  it('martes: los retiros del lunes desde el corte de las 19:00', () => {
+    expect(getOrdersDayRange('2026-10-06').pickupCarryFrom).toEqual(new Date('2026-10-05T22:00:00.000Z'));
+  });
+
+  it('domingo: los retiros del sábado desde las 19:00', () => {
+    const range = getOrdersDayRange('2026-10-11');
+    expect(range.pickupCarryFrom).toEqual(new Date('2026-10-10T22:00:00.000Z'));
+    expect(range.slotIds).toEqual(['2026-10-11T13', '2026-10-11T19']);
+  });
+
+  it('cambio de mes y de año', () => {
+    expect(getOrdersDayRange('2027-01-01')).toMatchObject({
+      dayStart: new Date('2027-01-01T03:00:00.000Z'),
+      // Jueves 31/12 a las 19:00.
+      pickupCarryFrom: new Date('2026-12-31T22:00:00.000Z'),
+      slotIds: ['2027-01-01T13', '2027-01-01T19'],
+    });
+  });
+});
+
+describe('firstSlotIdOf', () => {
+  it('es menor que cualquier turno de ese día y mayor que los del anterior (comparando texto)', () => {
+    const first = firstSlotIdOf('2026-10-06');
+    expect(first).toBe('2026-10-06T00');
+    expect('2026-10-05T19' < first).toBe(true);
+    expect('2026-10-06T13' >= first).toBe(true);
+    expect('2026-10-07T13' >= first).toBe(true);
+  });
+
+  it('la lista de pendientes de días anteriores tiene tope', () => {
+    expect(MAX_OVERDUE_ORDERS).toBe(100);
   });
 });

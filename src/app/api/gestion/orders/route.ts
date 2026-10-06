@@ -5,22 +5,23 @@ import { enforceRateLimit } from '@/lib/rate-limit';
 import { getArgentinaParts } from '@/lib/store-hours';
 import { isValidCalendarDate } from '@/lib/validation';
 import { MAX_ORDERS_PER_DAY } from '@/lib/order-options';
-import { ORDER_RECORD_SELECT, toOrderRecord } from '@/lib/order-lifecycle';
+import { ORDER_RECORD_SELECT, getOrdersDayRange, toOrderRecord } from '@/lib/order-lifecycle';
 
 export const runtime = 'nodejs';
-
-// Argentina es UTC-3 todo el año (sin horario de verano).
-const ARGENTINA_UTC_OFFSET = '-03:00';
-const DAY_MS = 24 * 60 * 60 * 1000;
-// Tope de cordura para una verdulería de barrio: si un día pasa de esto, hay
-// algo raro (spam) y no queremos mandarle al celular del dueño una lista gigante.
 
 /**
  * Pedidos de un día (?date=YYYY-MM-DD, hora argentina; sin fecha = hoy).
  *
- * "Los pedidos del día" son los que entraron ese día Y los que hay que entregar
- * ese día: un pedido hecho a la noche para el turno de las 13 h de mañana tiene
- * que aparecer mañana, que es cuando el dueño lo arma.
+ * "Los pedidos del día" son los que entraron ese día Y los que hay que armar
+ * ese día:
+ * - un envío hecho a la noche para el turno de las 13 h de mañana aparece
+ *   mañana, que es cuando el dueño lo arma;
+ * - un retiro que entró ayer después del corte (19:00, o el cierre si es antes:
+ *   el domingo a las 14) se prepara hoy, como le promete la tienda al cliente.
+ *   Antes quedaba en "ayer" y nadie lo veía.
+ *
+ * Hasta MAX_ORDERS_PER_DAY, de los más nuevos a los más viejos (el panel avisa
+ * si se llega al tope).
  */
 export async function GET(request: Request) {
   const auth = verifyAdminAuth(request);
@@ -37,17 +38,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Fecha inválida. Usá el formato AAAA-MM-DD.' }, { status: 400 });
   }
   const date = dateParam ?? getArgentinaParts().date;
-
-  const dayStart = new Date(`${date}T00:00:00${ARGENTINA_UTC_OFFSET}`);
-  const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+  const { dayStart, dayEnd, pickupCarryFrom, slotIds } = getOrdersDayRange(date);
 
   try {
+    // Cada rama del OR usa un índice: createdAt, deliverySlot (por igualdad,
+    // que en un btree no depende de la collation como un startsWith) y otra vez
+    // createdAt para los retiros que pasaron del día anterior.
     const orders = await prisma.order.findMany({
       where: {
         OR: [
           { createdAt: { gte: dayStart, lt: dayEnd } },
-          // El id del turno empieza con la fecha ("2026-10-06T13").
-          { deliverySlot: { startsWith: `${date}T` } },
+          { deliverySlot: { in: slotIds } },
+          { deliveryMethod: 'pickup', createdAt: { gte: pickupCarryFrom, lt: dayStart } },
         ],
       },
       orderBy: { createdAt: 'desc' },

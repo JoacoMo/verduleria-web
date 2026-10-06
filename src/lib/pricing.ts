@@ -175,9 +175,8 @@ export type PriceChange = { id: number; name: string; previousPrice: number; cur
 
 /**
  * Compara los precios que el cliente vio en el carrito con los que se cobrarían
- * ahora. Si el dueño cambió un precio (o venció una oferta) mientras el cliente
- * armaba el pedido, el checkout se frena y le muestra la diferencia antes de
- * registrar nada: nunca se le cobra un precio que no vio.
+ * ahora, en los dos sentidos. Qué hace el checkout con cada uno lo decide
+ * splitPriceChanges.
  */
 export function detectPriceChanges(
   expected: Array<{ id: unknown; price: unknown }>,
@@ -199,4 +198,24 @@ export function detectPriceChanges(
       ? [{ id: line.id, name: line.name, previousPrice, currentPrice: line.price }]
       : [];
   });
+}
+
+export type SplitPriceChanges = {
+  /** Algo se cobraría MÁS caro que lo que vio el cliente: el checkout se frena (409). */
+  increases: PriceChange[];
+  /** Algo bajó (oferta nueva, precio rebajado): se cobra el precio menor y se avisa. */
+  drops: PriceChange[];
+};
+
+/**
+ * Si el dueño cambió un precio (o venció una oferta) mientras el cliente armaba
+ * el pedido: lo que SUBIÓ frena el pedido y se le muestra antes de registrar
+ * nada (nunca se le cobra más de lo que vio); lo que BAJÓ no necesita su
+ * aprobación, se cobra el precio menor y se le avisa en la confirmación.
+ */
+export function splitPriceChanges(changes: PriceChange[]): SplitPriceChanges {
+  return {
+    increases: changes.filter((change) => change.currentPrice > change.previousPrice),
+    drops: changes.filter((change) => change.currentPrice < change.previousPrice),
+  };
 }

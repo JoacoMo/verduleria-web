@@ -1,11 +1,13 @@
 import type { MetadataRoute } from 'next';
 import { siteConfig } from '@/lib/site';
-import { getCachedProducts } from '@/lib/products';
+import { getCachedProductsSlow } from '@/lib/products';
 import type { ProductCategory } from '@/lib/product-categories';
 import type { Product } from '@/lib/types';
 
 // Se regenera como mucho una vez por hora (y antes si el panel toca productos,
-// porque getCachedProducts está atado al tag que invalida el panel).
+// porque getCachedProductsSlow está atado al tag que invalida el panel). Tiene
+// que ser la variante "lenta": Next usa el revalidate más corto entre la ruta y
+// sus cachés, y con la de 60 s el sitemap se regeneraba cada minuto.
 export const revalidate = 3600;
 
 /**
@@ -13,7 +15,7 @@ export const revalidate = 3600;
  * mano cuando cambia su contenido: poner `new Date()` le decía a Google que
  * cambiaban todos los días, y deja de creerle al sitemap.
  */
-const STATIC_PAGES_LAST_MODIFIED = new Date('2026-10-05T00:00:00-03:00');
+const STATIC_PAGES_LAST_MODIFIED = new Date('2026-10-06T00:00:00-03:00');
 
 type CatalogRoute = {
   path: string;
@@ -52,7 +54,7 @@ function latestUpdate(products: Product[]) {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   let products: Product[] = [];
   try {
-    products = await getCachedProducts();
+    products = await getCachedProductsSlow();
   } catch (error) {
     // Sin base igual se publica el sitemap, solo que sin fecha en el catálogo
     // (mejor sin fecha que con una inventada).

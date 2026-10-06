@@ -1,9 +1,10 @@
 import type { Prisma } from '@prisma/client';
-import { PRODUCT_MAX_CART_QUANTITY, formatProductQuantity, isProductUnit, normalizeProductQuantity } from './product-units';
+import { PRODUCT_MAX_CART_QUANTITY, formatProductQuantity, isProductUnit, normalizeWeighedQuantity } from './product-units';
 import { ORDER_STATUSES, ORDER_STATUS_LABELS, isPaymentMethod, type OrderStatus } from './order-options';
 import { DELIVERY_WINDOWS, describeSlot, findAvailableSlot, type DeliverySlot } from './delivery-slots';
 import { roundMoney, sumLines } from './pricing';
-import { ValidationError, type OrderAdjustmentRequest } from './validation';
+import { pickupCutoffMinutes } from './store-hours';
+import { ValidationError, type OrderAdjustmentItem } from './validation';
 import type { OrderItem, OrderRecord } from './types';
 
 /**
@@ -155,11 +156,13 @@ export type AdjustedOrder = {
  *   al cliente se le respeta el precio que vio.
  * - Cantidad 0, o un ítem que no viene, = se saca del pedido. Tiene que quedar
  *   al menos uno (si no, lo que corresponde es cancelarlo).
+ * - Lo que va por peso se guarda con la precisión de la balanza (5 g), no con
+ *   la de 50 g del carrito: el total final tiene que ser el del peso real.
  * - El envío no se recalcula: se mantiene lo que se le informó al cliente.
  */
 export function applyOrderAdjustment(
   storedItems: OrderItem[],
-  requested: OrderAdjustmentRequest,
+  requested: OrderAdjustmentItem[],
   shippingCost: number,
 ): AdjustedOrder {
   const storedIds = new Set(storedItems.map((item) => item.id));
@@ -175,7 +178,7 @@ export function applyOrderAdjustment(
     const requestedQuantity = requestedById.get(item.id);
     if (requestedQuantity === undefined || requestedQuantity === 0) return [];
 
-    const quantity = normalizeProductQuantity(requestedQuantity, item.unit);
+    const quantity = normalizeWeighedQuantity(requestedQuantity, item.unit);
     const max = PRODUCT_MAX_CART_QUANTITY[item.unit];
     if (quantity > max) {
       throw new ValidationError(`La cantidad de ${item.name} es demasiado grande (máximo ${formatProductQuantity(max, item.unit)}).`);
@@ -191,16 +194,75 @@ export function applyOrderAdjustment(
   return { items, subtotal, total: roundMoney(subtotal + shippingCost) };
 }
 
-/** Un pedido sin cobrar de más de esta antigüedad se da por abandonado. */
+/**
+ * Un pedido abierto (pendiente o con problema) de más de esta antigüedad se da
+ * por abandonado y lo cancela el cron, salvo que esté en efectivo o ya pesado
+ * (ver /api/cron/limpiar-pedidos).
+ */
 export const STALE_PENDING_DAYS = 7;
-/** Los cancelados y con problema se borran pasado este plazo (no hay nada que cobrar ni reclamar). */
+/** Los cancelados se borran pasado este plazo desde que se cancelaron (no hay nada que cobrar ni reclamar). */
 export const CLOSED_ORDER_RETENTION_DAYS = 90;
+/** Tope de la lista "Pendientes de días anteriores" del panel. */
+export const MAX_OVERDUE_ORDERS = 100;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 export function getCleanupCutoffs(now: Date = new Date()) {
   return {
-    cancelPendingBefore: new Date(now.getTime() - STALE_PENDING_DAYS * DAY_MS),
-    deleteClosedBefore: new Date(now.getTime() - CLOSED_ORDER_RETENTION_DAYS * DAY_MS),
+    /** Abiertos creados antes de esto: se cancelan (createdAt). */
+    cancelStaleBefore: new Date(now.getTime() - STALE_PENDING_DAYS * DAY_MS),
+    /** Cancelados que no se tocan desde antes de esto: se borran (updatedAt = cuándo se cancelaron). */
+    deleteCancelledBefore: new Date(now.getTime() - CLOSED_ORDER_RETENTION_DAYS * DAY_MS),
   };
+}
+
+/**
+ * Id de turno ("2026-10-06T13") para un día y una franja. El mismo formato que
+ * arma getUpcomingSlots (delivery-slots.ts).
+ */
+function slotIdFor(date: string, startMinutes: number) {
+  return `${date}T${String(Math.floor(startMinutes / 60)).padStart(2, '0')}`;
+}
+
+export type OrdersDayRange = {
+  /** 00:00 del día en Córdoba (Argentina es UTC-3 todo el año). */
+  dayStart: Date;
+  dayEnd: Date;
+  /**
+   * Desde cuándo un retiro del día anterior se arma este día: los que entraron
+   * después del corte de ese día (pickupCutoffMinutes: 19:00, o el cierre si es
+   * antes, como el domingo a las 14:00) se preparan al día siguiente.
+   */
+  pickupCarryFrom: Date;
+  /** Ids de los turnos de entrega del día, para buscarlos por igualdad (usa el índice). */
+  slotIds: string[];
+};
+
+/**
+ * Rango de "los pedidos del día" del panel para una fecha "YYYY-MM-DD" (hora
+ * argentina): los que entraron ese día, los que se entregan ese día y los
+ * retiros que entraron el día anterior después del corte.
+ */
+export function getOrdersDayRange(date: string): OrdersDayRange {
+  const dayStart = new Date(`${date}T00:00:00-03:00`);
+  const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+  // Día de la semana de la fecha pedida (al mediodía UTC no hay dudas de cuál es).
+  const dayIndex = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const previousDayIndex = (dayIndex + 6) % 7;
+  const pickupCarryFrom = new Date(dayStart.getTime() - (24 * 60 - pickupCutoffMinutes(previousDayIndex)) * MINUTE_MS);
+  return {
+    dayStart,
+    dayEnd,
+    pickupCarryFrom,
+    slotIds: DELIVERY_WINDOWS.map(({ start }) => slotIdFor(date, start)),
+  };
+}
+
+/**
+ * Primer id de turno posible de un día ("2026-10-06T00"). Los ids tienen todos
+ * el mismo formato y largo, así que comparar como texto es comparar por fecha.
+ */
+export function firstSlotIdOf(date: string) {
+  return slotIdFor(date, 0);
 }

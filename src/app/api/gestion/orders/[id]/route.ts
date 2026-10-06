@@ -21,13 +21,22 @@ type RouteContext = {
 };
 
 const NOT_FOUND_MESSAGE = 'Pedido no encontrado.';
+const CHANGED_MESSAGE = 'El pedido cambió mientras lo editabas. Recargá para ver la última versión.';
 
 /**
  * Ajuste con los pesos reales.
  *
  * En lo que va por peso el total del pedido es estimado: el dueño pesa, carga
  * acá lo que realmente se lleva el cliente y le manda el total final por
- * WhatsApp (que es lo que se transfiere). Body: { items: [{ id, quantity }] }.
+ * WhatsApp (que es lo que se transfiere).
+ *
+ * Body: { items: [{ id, quantity }], expectedUpdatedAt }. expectedUpdatedAt es
+ * el updatedAt del pedido que tenía el panel al abrir el editor (obligatorio):
+ * si el pedido cambió desde entonces (otro dispositivo cargó otros pesos, o se
+ * confirmó o canceló), responde 409 y no pisa nada. Antes se comparaba contra
+ * lo que el propio request acababa de leer, y un editor abierto hacía rato
+ * pisaba en silencio el ajuste de otro.
+ *
  * Las reglas del ajuste están en applyOrderAdjustment (order-lifecycle.ts).
  *
  * Responde el pedido actualizado (OrderRecord).
@@ -48,7 +57,7 @@ export async function PUT(request: Request, context: RouteContext) {
   if (!parsed.ok) return parsed.response;
 
   try {
-    const requested = parseOrderAdjustment(parsed.data);
+    const { items: requested, expectedUpdatedAt } = parseOrderAdjustment(parsed.data);
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -64,15 +73,19 @@ export async function PUT(request: Request, context: RouteContext) {
       );
     }
 
+    if (order.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+      return NextResponse.json({ error: CHANGED_MESSAGE }, { status: 409 });
+    }
+
     const adjusted = applyOrderAdjustment(parseStoredOrderItems(order.items), requested, order.shippingCost);
 
     try {
-      // Update condicional: además del estado, se exige que el pedido siga igual
-      // que cuando se leyó (updatedAt). Si en el medio se confirmó, se canceló o
-      // se ajustó desde otra pestaña, no se pisa: Prisma no encuentra la fila y
-      // se responde 409 para que el panel recargue.
+      // Update condicional: además del estado, se exige que el pedido siga en la
+      // versión que vio el panel (updatedAt). Si justo en el medio se confirmó,
+      // se canceló o se ajustó desde otro lado, no se pisa: Prisma no encuentra
+      // la fila y se responde 409 para que el panel recargue.
       const updated = await prisma.order.update({
-        where: { id: orderId, status: { in: [...OPEN_ORDER_STATUSES] }, updatedAt: order.updatedAt },
+        where: { id: orderId, status: { in: [...OPEN_ORDER_STATUSES] }, updatedAt: expectedUpdatedAt },
         data: {
           items: adjusted.items,
           subtotal: adjusted.subtotal,
@@ -86,7 +99,7 @@ export async function PUT(request: Request, context: RouteContext) {
       if (!hasPrismaCode(error, 'P2025')) throw error;
       const stillThere = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
       return stillThere
-        ? NextResponse.json({ error: 'El pedido cambió mientras lo editabas. Recargá y volvé a cargar los pesos.' }, { status: 409 })
+        ? NextResponse.json({ error: CHANGED_MESSAGE }, { status: 409 })
         : NextResponse.json({ error: NOT_FOUND_MESSAGE }, { status: 404 });
     }
   } catch (error) {

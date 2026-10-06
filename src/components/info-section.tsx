@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Info } from 'lucide-react';
 import { siteConfig } from '@/lib/site';
 import { formatArs } from '@/lib/format-price';
-import { ORDER_CUTOFF_LABEL } from '@/lib/store-hours';
+import { PICKUP_CUTOFF_RULE } from '@/components/storefront/pickup-text';
 import { getDeliveryScheduleText, getFullAddress, getLeadTimeText, type FaqEntry } from '@/lib/seo';
 
 /**
@@ -36,7 +36,7 @@ function shippingCostAnswer() {
 }
 
 function pickupAnswer() {
-  return `Sí, sin costo y sin turno, en ${getFullAddress()}. ${siteConfig.storeHours.weekday}. ${siteConfig.storeHours.sunday}. Los pedidos para retirar que llegan antes de las ${ORDER_CUTOFF_LABEL} se preparan en el día; los que llegan después, a partir del día siguiente.`;
+  return `Sí, sin costo y sin turno, en ${getFullAddress()}. ${siteConfig.storeHours.weekday}. ${siteConfig.storeHours.sunday}. Los pedidos para retirar que llegan ${PICKUP_CUTOFF_RULE} se preparan en el día; los que llegan después, a partir del día siguiente.`;
 }
 
 /** Preguntas frecuentes de la home. */
@@ -83,7 +83,7 @@ export function getHomeFaqEntries(): FaqEntry[] {
     },
     {
       question: '¿Hasta qué hora puedo pedir?',
-      answer: `Para retirar, los pedidos que llegan antes de las ${ORDER_CUTOFF_LABEL} se preparan en el día y los que llegan después, a partir del día siguiente. Para envío, elegís uno de los próximos turnos con al menos ${lead} de anticipación: ${schedule.deadlines}.`,
+      answer: `Para retirar, los pedidos que llegan ${PICKUP_CUTOFF_RULE} se preparan en el día y los que llegan después, a partir del día siguiente. Para envío, elegís uno de los próximos turnos con al menos ${lead} de anticipación: ${schedule.deadlines}.`,
     },
     {
       question: '¿Se puede comprar por gramo?',

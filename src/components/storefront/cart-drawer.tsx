@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowLeft, RotateCw, Scale, ShoppingCart, X } from 'lucide-react';
 import { formatArs } from '@/lib/format-price';
@@ -61,8 +61,12 @@ export type CartDrawerProps = {
  *
  * Es un diálogo modal: atrapa el foco mientras está abierto, se cierra con Escape
  * o tocando afuera, y al cerrarse devuelve el foco al botón que lo abrió.
+ *
+ * No va en el JS inicial de la página: la tienda lo carga con next/dynamic
+ * (cart-drawer-chunk.ts) recién con el primer producto agregado o al acercarse
+ * al botón del carrito.
  */
-export default function CartDrawer(props: CartDrawerProps) {
+function CartDrawerComponent(props: CartDrawerProps) {
   const {
     isOpen,
     onClose,
@@ -356,3 +360,16 @@ export default function CartDrawer(props: CartDrawerProps) {
     </div>
   );
 }
+
+/**
+ * Cerrado, el panel no se vuelve a dibujar: está fuera de la pantalla e inert, y
+ * antes se redibujaba entero (unos 200 nodos y sus fotos) en cada «Agregar al
+ * carrito». Al abrirse cambia isOpen y se dibuja con los datos de ese momento;
+ * al cerrarse también, para la transición de salida.
+ */
+function areClosedDrawerPropsEqual(previous: Pick<CartDrawerProps, 'isOpen'>, next: Pick<CartDrawerProps, 'isOpen'>) {
+  return !previous.isOpen && !next.isOpen;
+}
+
+const CartDrawer = memo(CartDrawerComponent, areClosedDrawerPropsEqual);
+export default CartDrawer;

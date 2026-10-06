@@ -1,14 +1,16 @@
-import { getCachedProducts } from '@/lib/products';
+import { getCachedProductsSlow } from '@/lib/products';
 import { siteConfig } from '@/lib/site';
 import { PRODUCT_UNIT_LABELS, isWeightUnit } from '@/lib/product-units';
 import { PRODUCT_CATEGORIES } from '@/lib/product-categories';
 import { formatArs } from '@/lib/format-price';
 import { getDiscountPercent, getEffectivePrice, isOfferActive } from '@/lib/pricing';
 import { DELIVERY_WINDOWS, SLOT_ORDER_LEAD_MINUTES } from '@/lib/delivery-slots';
-import { OPENING_WINDOWS, ORDER_CUTOFF_LABEL, TIMEZONE, formatMinutes } from '@/lib/store-hours';
+import { OPENING_WINDOWS, ORDER_CUTOFF_LABEL, ORDER_CUTOFF_MINUTES, TIMEZONE, formatMinutes, pickupCutoffMinutes } from '@/lib/store-hours';
 import type { Product } from '@/lib/types';
 
 export const runtime = 'nodejs';
+// Cada 10 minutos, por las ofertas que vencen. El catálogo sale de la caché de
+// una hora (getCachedProductsSlow), que el panel invalida al instante.
 export const revalidate = 600;
 
 /**
@@ -40,6 +42,21 @@ function sundayDeliveryText() {
   if (sunday.length === DELIVERY_WINDOWS.length) return '';
   if (sunday.length === 0) return ' Los domingos no hay envíos.';
   return ` Los domingos solo ${windowsText(sunday)}.`;
+}
+
+const DAY_NAMES_PLURAL = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
+
+/**
+ * "después de las 19:00 (los domingos, después de las 14:00)": el corte de los
+ * retiros es a las 19:00 o al cierre si el local cierra antes (pickupCutoffMinutes).
+ */
+function pickupCutoffText() {
+  const exceptions = DAY_NAMES_PLURAL.flatMap((name, dayIndex) => {
+    const cutoff = pickupCutoffMinutes(dayIndex);
+    if (cutoff === ORDER_CUTOFF_MINUTES) return [];
+    return [cutoff === 0 ? `los ${name}, que está cerrado` : `los ${name}, después de las ${formatMinutes(cutoff)}`];
+  });
+  return `después de las ${ORDER_CUTOFF_LABEL}${exceptions.length > 0 ? ` (${exceptions.join('; ')})` : ''}`;
 }
 
 function leadTimeText() {
@@ -111,7 +128,7 @@ export async function GET() {
   let hasWeightProducts = true;
 
   try {
-    const products = await getCachedProducts();
+    const products = await getCachedProductsSlow();
     if (products.length > 0) {
       productSections = buildProductSections(products, now);
       hasWeightProducts = products.some((product) => isWeightUnit(product.unit));
@@ -159,7 +176,7 @@ ${weightNote}- Medios de pago: transferencia bancaria o efectivo. No se cobra co
 
 ## Retiro y envíos
 
-- Retiro en el local: sin costo y sin turno, en el horario de atención. Los pedidos para retirar hechos después de las ${ORDER_CUTOFF_LABEL} se preparan al día siguiente.
+- Retiro en el local: sin costo y sin turno, en el horario de atención. Los pedidos para retirar hechos ${pickupCutoffText()} se preparan al día siguiente que abre el local.
 - Envío a domicilio en Córdoba Capital, en dos turnos fijos: ${windowsText(DELIVERY_WINDOWS)}.${sundayDeliveryText()} Hay que pedir con al menos ${leadTimeText()} de anticipación.
 - Costo del envío: ${formatArs(siteConfig.deliveryFee)} fijo. Gratis en pedidos desde ${formatArs(siteConfig.deliveryFreeThreshold)} en productos.
 - Pedido mínimo para envío: ${formatArs(siteConfig.deliveryMinPurchase)} en productos (sin contar el envío).

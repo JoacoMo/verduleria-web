@@ -26,6 +26,8 @@ export type OrderMessageInput = {
   deliverySlotId: string | null;
   /** Texto del turno por si el id no se puede describir ("Hoy de 13 a 14 h"). */
   deliverySlotLabel?: string | null;
+  /** Retiro: cuándo está listo ("mañana desde las 8:00"), de describePickupReady. */
+  pickupReady?: string | null;
   paymentMethod: PaymentMethod;
   replacementPolicy: ReplacementPolicy;
   notes: string | null;
@@ -71,7 +73,10 @@ export function buildOrderMessage(input: OrderMessageInput): string {
     const slotText = describeSlot(input.deliverySlotId) ?? input.deliverySlotLabel ?? null;
     if (slotText) lines.push(`🕐 *Turno:* ${slotText}`);
   } else {
-    lines.push('🏪 *Retiro en el local*');
+    // Cuándo lo va a buscar, para que el local lo tenga listo (y el cliente no
+    // vaya un domingo a la tarde con el local cerrado).
+    const ready = input.pickupReady?.trim();
+    lines.push(ready ? `🏪 *Retiro en el local* (listo ${ready})` : '🏪 *Retiro en el local*');
   }
 
   if (input.paymentMethod === 'transfer') {

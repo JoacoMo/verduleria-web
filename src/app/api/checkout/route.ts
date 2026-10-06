@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { sanitizeId } from '@/lib/sanitize';
 import { hasPrismaCode, prisma } from '@/lib/prisma';
 import { siteConfig } from '@/lib/site';
-import { enforceRateLimit } from '@/lib/rate-limit';
+import { ORDER_CAPS, enforceRateLimit, getClientIp } from '@/lib/rate-limit';
+import { logSecurityEvent } from '@/lib/security-log';
 import { readJsonBody } from '@/lib/request-body';
 import { formatArs } from '@/lib/format-price';
-import { buildOrderLines, computeTotals, detectPriceChanges, roundMoney, type OrderLine } from '@/lib/pricing';
+import { buildOrderLines, computeTotals, detectPriceChanges, roundMoney, splitPriceChanges, type OrderLine } from '@/lib/pricing';
 import { isProductUnit } from '@/lib/product-units';
 import { isPaymentMethod } from '@/lib/order-options';
 import type { DeliverySlot } from '@/lib/delivery-slots';
@@ -20,6 +21,7 @@ import {
   parsePaymentMethod,
 } from '@/lib/validation';
 import type {
+  CheckoutPriceChange,
   CheckoutPriceChangedResponse,
   CheckoutResponse,
   CheckoutSlotResponse,
@@ -79,6 +81,7 @@ function buildResponse(params: {
   paymentMethod: PaymentMethod;
   deliveryMethod: DeliveryMethod;
   deliverySlot: DeliverySlot | null;
+  priceDrops: CheckoutPriceChange[];
   yaExistia?: boolean;
 }): CheckoutResponse {
   return {
@@ -94,6 +97,7 @@ function buildResponse(params: {
     transferCbu: siteConfig.transferCbu,
     whatsappNumber: siteConfig.whatsappNumber,
     storeName: siteConfig.storeName,
+    priceDrops: params.priceDrops,
     ...(params.yaExistia ? { yaExistia: true } : {}),
   };
 }
@@ -109,12 +113,56 @@ function responseForExisting(order: ExistingOrder, now: Date) {
     paymentMethod: isPaymentMethod(order.paymentMethod) ? order.paymentMethod : 'transfer',
     deliveryMethod: order.deliveryMethod === 'delivery' ? 'delivery' : 'pickup',
     deliverySlot: slotFromId(order.deliverySlot, now),
+    // El pedido ya se creó con los precios de ese momento: no hay nada nuevo que avisar.
+    priceDrops: [],
     yaExistia: true,
   }));
 }
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
+}
+
+const PATH = '/api/checkout';
+const TOO_MANY_ORDERS_MESSAGE = 'Estás haciendo muchos pedidos seguidos. Esperá unos minutos.';
+
+/**
+ * Topes de pedidos contados en la base (ver ORDER_CAPS): por teléfono y de toda
+ * la tienda. Devuelve la respuesta de corte, o null si el pedido puede entrar.
+ * A diferencia del rate limit en memoria, valen para todas las instancias y
+ * todas las IPs: frenan el spam de pedidos falsos que taparía los reales.
+ */
+async function checkOrderCaps(request: Request, customerPhone: string, now: Date) {
+  const [samePhone, lastHour] = await Promise.all([
+    // Usa el índice (customerPhone, createdAt). Los cancelados no cuentan: si el
+    // dueño cancela pedidos repetidos, el cliente puede volver a pedir.
+    prisma.order.count({
+      where: {
+        customerPhone,
+        createdAt: { gte: new Date(now.getTime() - ORDER_CAPS.perPhone.windowMs) },
+        status: { not: 'cancelled' },
+      },
+    }),
+    prisma.order.count({ where: { createdAt: { gte: new Date(now.getTime() - ORDER_CAPS.global.windowMs) } } }),
+  ]);
+
+  const ip = getClientIp(request);
+  if (samePhone >= ORDER_CAPS.perPhone.limit) {
+    // Sin el teléfono en el log: es un dato personal y no hace falta para investigar.
+    logSecurityEvent('rate_limit', { ip, path: PATH, method: 'POST', reason: `tope de ${ORDER_CAPS.perPhone.limit} pedidos por teléfono en 24 h` });
+    return NextResponse.json(
+      { error: 'Ya hiciste varios pedidos con este teléfono en las últimas 24 horas. Si necesitás otro, escribinos por WhatsApp.' },
+      { status: 429 },
+    );
+  }
+  if (lastHour >= ORDER_CAPS.global.limit) {
+    logSecurityEvent('rate_limit', { ip, path: PATH, method: 'POST', reason: `tope global de ${ORDER_CAPS.global.limit} pedidos por hora` });
+    return NextResponse.json(
+      { error: 'Estamos recibiendo demasiados pedidos. Probá en unos minutos o escribinos por WhatsApp.' },
+      { status: 503, headers: { 'Retry-After': '300' } },
+    );
+  }
+  return null;
 }
 
 /**
@@ -125,7 +173,10 @@ function badRequest(message: string) {
  * pedido está completo y es exactamente lo que el cliente vio.
  */
 export async function POST(request: Request) {
-  const limited = enforceRateLimit(request, 'checkout', 'Estás haciendo muchos pedidos seguidos. Esperá unos minutos.');
+  // Cupo de INTENTOS (válidos o no): generoso, para que corregir el formulario o
+  // un 409 de precios no deje a nadie afuera. Los pedidos creados tienen su
+  // propio cupo, más chico, que se consume recién antes de grabar (paso 6).
+  const limited = enforceRateLimit(request, 'checkout', TOO_MANY_ORDERS_MESSAGE);
   if (limited) return limited;
 
   const parsed = await readJsonBody<CheckoutBody>(request);
@@ -207,11 +258,15 @@ export async function POST(request: Request) {
       return badRequest('No hay productos válidos en el carrito.');
     }
 
-    // Si el dueño cambió un precio (o venció una oferta) mientras el cliente
+    // Si el dueño SUBIÓ un precio (o venció una oferta) mientras el cliente
     // armaba el pedido, NO se crea el pedido: se le muestra la diferencia y él
-    // decide. Nunca se le cobra un precio que no vio.
+    // decide. Nunca se le cobra más de lo que vio. Si solo bajaron, se cobra el
+    // precio menor sin frenarlo (no hace falta su aprobación) y se le avisa.
+    // En el 409 van todos los cambios, también los que bajaron, para que el
+    // carrito quede con el total que de verdad se va a cobrar.
     const priceChanges = detectPriceChanges(cart, lines);
-    if (priceChanges.length > 0) {
+    const { increases, drops: priceDrops } = splitPriceChanges(priceChanges);
+    if (increases.length > 0) {
       return NextResponse.json(
         {
           error: 'Cambiaron algunos precios mientras armabas el pedido. Revisá el carrito antes de confirmar.',
@@ -239,7 +294,14 @@ export async function POST(request: Request) {
       );
     }
 
-    // ---- 6. Crear el pedido ----
+    // ---- 6. Topes de spam y crear el pedido ----
+    // Recién acá, con el pedido completo y válido, se gasta el cupo de pedidos
+    // creados (en memoria, por IP) y se miran los topes de la base.
+    const createLimited = enforceRateLimit(request, 'checkoutCreate', TOO_MANY_ORDERS_MESSAGE);
+    if (createLimited) return createLimited;
+    const capped = await checkOrderCaps(request, customer.customerPhone, now);
+    if (capped) return capped;
+
     const items: OrderLine[] = lines;
     try {
       const order = await prisma.order.create({
@@ -270,6 +332,7 @@ export async function POST(request: Request) {
         paymentMethod,
         deliveryMethod,
         deliverySlot: slotCheck.slot,
+        priceDrops,
       }));
     } catch (error) {
       // P2002 = violación de índice único. Pasa cuando dos requests con la misma

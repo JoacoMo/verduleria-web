@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { POST as checkout } from '@/app/api/checkout/route';
 import { formatArs } from '@/lib/format-price';
-import { RATE_LIMITS } from '@/lib/rate-limit';
+import { ORDER_CAPS, RATE_LIMITS } from '@/lib/rate-limit';
 import type { CheckoutResponse } from '@/lib/types';
 import {
   apiRequest,
@@ -33,13 +33,24 @@ const CUSTOMER = {
   replacementPolicy: 'replace',
 };
 
+let phoneCounter = 0;
+
+/**
+ * Teléfono distinto por pedido: el checkout corta en ORDER_CAPS.perPhone
+ * pedidos por teléfono en 24 h, y sin esto los tests se cortarían entre sí.
+ */
+function uniquePhone() {
+  phoneCounter += 1;
+  return `351${String(4_000_000 + phoneCounter).padStart(7, '0')}`;
+}
+
 function body(input: CheckoutInput) {
   return {
     cart: input.cart,
     deliveryMethod: input.deliveryMethod ?? 'pickup',
     deliverySlot: input.deliverySlot,
     paymentMethod: input.paymentMethod ?? 'transfer',
-    customer: { ...CUSTOMER, ...input.customer },
+    customer: { ...CUSTOMER, customerPhone: uniquePhone(), ...input.customer },
     idempotencyKey: input.idempotencyKey === undefined ? newIdempotencyKey() : input.idempotencyKey,
   };
 }
@@ -67,6 +78,7 @@ describeDb('POST /api/checkout: pedidos que entran', () => {
         { id: acelga.id, quantity: 2, price: 900 },
       ],
       paymentMethod: 'cash',
+      customer: { customerPhone: '351 123-4567' },
     });
 
     const response = await post(payload);
@@ -88,6 +100,7 @@ describeDb('POST /api/checkout: pedidos que entran', () => {
       transferCbu: '0000003100000000000001',
       whatsappNumber: '5493510000000',
       storeName: 'El Pampa',
+      priceDrops: [],
     });
     // Nada interno en la respuesta.
     expect(JSON.stringify(data)).not.toContain(payload.idempotencyKey as string);
@@ -243,6 +256,44 @@ describeDb('POST /api/checkout: mínimo de envío, stock y precios', () => {
     const retry = await post({ ...payload, cart: [{ id: product.id, quantity: 2, price: 1000 }] });
     expect(retry.status).toBe(200);
     expect(await readJson(retry)).toMatchObject({ total: 2000 });
+  });
+
+  // Antes también frenaba con 409 cuando un precio BAJABA: fricción sin beneficio.
+  it('precio que bajó (oferta nueva) → el pedido se crea con el precio menor y lo informa en priceDrops', async () => {
+    const uva = await createProduct({ price: 3000, offerPrice: 2500 });
+    const tomate = await createProduct({ price: 1000 });
+    const payload = body({ cart: [{ id: uva.id, quantity: 2, price: 3000 }, { id: tomate.id, quantity: 1, price: 1000 }] });
+    const response = await post(payload);
+    expect(response.status).toBe(200);
+    const data = await readJson<CheckoutResponse>(response);
+    expect(data).toMatchObject({
+      items: [expect.objectContaining({ id: uva.id, price: 2500, quantity: 2 }), expect.objectContaining({ id: tomate.id, price: 1000 })],
+      subtotal: 6000,
+      total: 6000,
+      priceDrops: [{ id: uva.id, name: uva.name, previousPrice: 3000, currentPrice: 2500 }],
+    });
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: data.orderId } })).toMatchObject({ total: 6000 });
+
+    // En un reintento no se vuelve a avisar: el pedido ya está creado.
+    const retry = await readJson<CheckoutResponse>(await post(payload));
+    expect(retry).toMatchObject({ orderId: data.orderId, yaExistia: true, priceDrops: [] });
+  });
+
+  it('uno subió y otro bajó → 409 con los dos cambios (el carrito queda con el total real), sin crear pedido', async () => {
+    const sube = await createProduct({ price: 1100 });
+    const baja = await createProduct({ price: 2000, offerPrice: 1500 });
+    const payload = body({ cart: [{ id: sube.id, quantity: 1, price: 1000 }, { id: baja.id, quantity: 1, price: 2000 }] });
+    const response = await post(payload);
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toEqual({
+      error: 'Cambiaron algunos precios mientras armabas el pedido. Revisá el carrito antes de confirmar.',
+      code: 'PRECIOS_CAMBIARON',
+      priceChanges: [
+        { id: sube.id, name: sube.name, previousPrice: 1000, currentPrice: 1100 },
+        { id: baja.id, name: baja.name, previousPrice: 2000, currentPrice: 1500 },
+      ],
+    });
+    expect(await ordersWithKey(payload.idempotencyKey as string)).toBe(0);
   });
 
   it('oferta que venció mientras el cliente armaba el carrito → 409 con el precio normal', async () => {
@@ -463,6 +514,33 @@ describeDb('POST /api/checkout: cuerpos inválidos', () => {
     }
   });
 
+  // Era un bug: sin Content-Length (Transfer-Encoding: chunked) se leía el
+  // cuerpo entero antes de responder 413.
+  it('cuerpo chunked de 20 MB → 413 sin leerlo entero', async () => {
+    const CHUNK = 64 * 1024;
+    let produced = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (produced >= 20 * 1024 * 1024) {
+          controller.close();
+          return;
+        }
+        produced += CHUNK;
+        controller.enqueue(new Uint8Array(CHUNK).fill(0x20));
+      },
+    });
+    const request = new Request('http://localhost/api/checkout', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': nextIp(), 'content-type': 'application/json' },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit);
+    const response = await checkout(request);
+    expect(response.status).toBe(413);
+    expect(await readJson(response)).toEqual({ error: 'El cuerpo del pedido es demasiado grande.' });
+    expect(produced).toBeLessThanOrEqual(100 * 1024 + 2 * CHUNK);
+  });
+
   it('body gigante → 413 (por tamaño real y por Content-Length declarado)', async () => {
     const huge = JSON.stringify({ ...body({ cart: [{ id: 1, quantity: 1 }] }), customer: { ...CUSTOMER, notes: 'x'.repeat(200 * 1024) } });
     const byLength = await checkout(apiRequest('/api/checkout', { method: 'POST', rawBody: huge }));
@@ -524,7 +602,7 @@ describeDb('POST /api/checkout: textos largos', () => {
   });
 });
 
-describeDb('POST /api/checkout: rate limit', () => {
+describeDb('POST /api/checkout: rate limit y topes de spam', () => {
   it(`más de ${RATE_LIMITS.checkout.limit} intentos en 10 minutos desde la misma IP → 429`, async () => {
     const ip = nextIp();
     // Bodies inválidos: el rate limit va antes que cualquier lectura de la base.
@@ -538,5 +616,97 @@ describeDb('POST /api/checkout: rate limit', () => {
     expect(await readJson(limited)).toEqual({ error: 'Estás haciendo muchos pedidos seguidos. Esperá unos minutos.' });
     // Otra IP no está afectada.
     expect((await post({})).status).toBe(400);
+  });
+
+  // Antes el cupo de 12 contaba todo: corregir el formulario o recibir un 409 de
+  // precios gastaba lo mismo que un pedido real.
+  it(`pedidos creados: más de ${RATE_LIMITS.checkoutCreate.limit} en 10 minutos desde la misma IP → 429; los intentos fallidos no cuentan`, async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const ip = nextIp();
+    const product = await createProduct({ price: 1000 });
+    for (let i = 0; i < 5; i += 1) {
+      expect((await post(body({ cart: [{ id: product.id, quantity: 1, price: 900 }] }), ip)).status).toBe(409);
+    }
+    for (let i = 0; i < RATE_LIMITS.checkoutCreate.limit; i += 1) {
+      expect((await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] }), ip)).status).toBe(200);
+    }
+    const payload = body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] });
+    const limited = await post(payload, ip);
+    expect(limited.status).toBe(429);
+    expect(await readJson(limited)).toEqual({ error: 'Estás haciendo muchos pedidos seguidos. Esperá unos minutos.' });
+    expect(await ordersWithKey(payload.idempotencyKey as string)).toBe(0);
+  });
+
+  it(`tope por teléfono: ${ORDER_CAPS.perPhone.limit} pedidos en 24 h → el siguiente 429 sin crear; los cancelados y los viejos no cuentan`, async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const product = await createProduct({ price: 1000 });
+    const phone = uniquePhone();
+    // El mismo número escrito de otra forma es el mismo teléfono.
+    const spelled = `${phone.slice(0, 3)} ${phone.slice(3, 6)}-${phone.slice(6)}`;
+    const ids: number[] = [];
+    for (let i = 0; i < ORDER_CAPS.perPhone.limit; i += 1) {
+      const response = await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }], customer: { customerPhone: i % 2 ? spelled : phone } }));
+      expect(response.status).toBe(200);
+      ids.push((await readJson<CheckoutResponse>(response)).orderId);
+    }
+
+    const payload = body({ cart: [{ id: product.id, quantity: 1, price: 1000 }], customer: { customerPhone: phone } });
+    const capped = await post(payload);
+    expect(capped.status).toBe(429);
+    expect(await readJson(capped)).toEqual({ error: 'Ya hiciste varios pedidos con este teléfono en las últimas 24 horas. Si necesitás otro, escribinos por WhatsApp.' });
+    expect(await ordersWithKey(payload.idempotencyKey as string)).toBe(0);
+    // Queda un evento de seguridad, sin el teléfono.
+    const logged = vi.mocked(console.error).mock.calls.map(([line]) => String(line)).filter((line) => line.includes('"secEvent":"rate_limit"'));
+    expect(logged.some((line) => line.includes('por teléfono'))).toBe(true);
+    expect(logged.join('\n')).not.toContain(phone);
+
+    // Otro teléfono, sin problema.
+    expect((await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] }))).status).toBe(200);
+
+    // Si el dueño cancela uno (por ejemplo, un pedido repetido), puede volver a pedir.
+    await prisma.order.update({ where: { id: ids[0] }, data: { status: 'cancelled' } });
+    expect((await post(payload)).status).toBe(200);
+
+    // Los de hace más de 24 h no cuentan.
+    await prisma.order.updateMany({ where: { customerPhone: phone }, data: { createdAt: new Date(Date.now() - ORDER_CAPS.perPhone.windowMs - 60_000) } });
+    expect((await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }], customer: { customerPhone: phone } }))).status).toBe(200);
+  });
+
+  it(`tope global: ${ORDER_CAPS.global.limit} pedidos en la última hora → 503 sin crear`, async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const product = await createProduct({ price: 1000 });
+    const prefix = `tope-global-${Date.now()}-`;
+    const recent = await prisma.order.count({ where: { createdAt: { gte: new Date(Date.now() - ORDER_CAPS.global.windowMs) } } });
+    const missing = Math.max(0, ORDER_CAPS.global.limit - recent);
+    await prisma.order.createMany({
+      data: Array.from({ length: missing }, (_, i) => ({
+        items: [],
+        subtotal: 1000,
+        shippingCost: 0,
+        total: 1000,
+        status: 'pending',
+        deliveryMethod: 'pickup',
+        customerPhone: `39900${String(i).padStart(5, '0')}`,
+        idempotencyKey: `${prefix}${i}`,
+      })),
+    });
+    try {
+      const payload = body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] });
+      const response = await post(payload);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('300');
+      expect(await readJson(response)).toEqual({ error: 'Estamos recibiendo demasiados pedidos. Probá en unos minutos o escribinos por WhatsApp.' });
+      expect(await ordersWithKey(payload.idempotencyKey as string)).toBe(0);
+      expect(vi.mocked(console.error).mock.calls.some(([line]) => String(line).includes('tope global'))).toBe(true);
+
+      // Un reintento de un pedido que YA se creó sigue respondiendo (va antes de los topes).
+      await prisma.order.deleteMany({ where: { idempotencyKey: `${prefix}0` } });
+      const created = await readJson<CheckoutResponse>(await post(payload));
+      expect(created.orderId).toEqual(expect.any(Number));
+      expect(await post(body({ cart: [{ id: product.id, quantity: 1, price: 1000 }] }))).toHaveProperty('status', 503);
+      expect(await readJson(await post(payload))).toMatchObject({ orderId: created.orderId, yaExistia: true });
+    } finally {
+      await prisma.order.deleteMany({ where: { idempotencyKey: { startsWith: prefix } } });
+    }
   });
 });

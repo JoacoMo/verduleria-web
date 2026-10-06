@@ -63,6 +63,7 @@ export default async function Page() {
         initialProducts={products}
         storeInfo={getPublicStoreInfo()}
         infoSection={<HomeInfoSection faq={faq} />}
+        renderedAt={now.getTime()}
       />
     </>
   );

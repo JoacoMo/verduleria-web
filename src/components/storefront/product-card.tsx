@@ -28,6 +28,11 @@ export type ProductCardProps = {
   /** Lo que ya hay en el carrito (0 si nada). */
   inCartQuantity: number;
   imagePriority: ImagePriority;
+  /**
+   * Plegada hasta "Ver todos los productos": está en el HTML (para los
+   * buscadores) pero oculta con CSS, y su foto no se baja (va con loading="lazy").
+   */
+  collapsed?: boolean;
   /** Tarjeta destacada de "Bolsones de la semana": muestra entera la descripción. */
   featured?: boolean;
   onAdjust: (productId: number, unit: ProductUnit, direction: 1 | -1) => void;
@@ -50,6 +55,7 @@ function ProductCardComponent({
   selectedQuantity,
   inCartQuantity,
   imagePriority,
+  collapsed = false,
   featured = false,
   onAdjust,
   onAdd,
@@ -65,6 +71,7 @@ function ProductCardComponent({
     isBolson ? 'product-card-bolson' : '',
     onOffer ? 'product-card-offer' : '',
     product.available ? '' : 'product-card-unavailable',
+    collapsed ? 'is-collapsed' : '',
   ].filter(Boolean).join(' ');
 
   return (

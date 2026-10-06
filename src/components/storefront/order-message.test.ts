@@ -67,10 +67,22 @@ describe('buildOrderMessage', () => {
     expect(message).not.toContain('aprox.');
     expect(message).not.toContain('Subtotal');
     expect(message).not.toContain('Turno');
-    expect(message).toContain('🏪 *Retiro en el local*');
+    expect(message.split('\n')).toContain('🏪 *Retiro en el local*');
     expect(message).toContain('💵 *Pago:* Efectivo al retirar');
     expect(message).not.toContain('Aclaraciones');
     expect(message).not.toContain('_Lo que va por peso');
+  });
+
+  it('retiro: dice cuándo está listo', () => {
+    const message = buildOrderMessage(baseMessage({
+      deliveryMethod: 'pickup',
+      customerAddress: null,
+      deliverySlotId: null,
+      pickupReady: 'mañana desde las 8:00',
+    }));
+    expect(message).toContain('🏪 *Retiro en el local* (listo mañana desde las 8:00)');
+    // Con envío no se usa.
+    expect(buildOrderMessage(baseMessage({ pickupReady: 'hoy desde las 17:30' }))).not.toContain('listo');
   });
 
   it('transferencia sin nada por peso no dice "cuando me pasen el total final"', () => {

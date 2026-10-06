@@ -69,6 +69,24 @@ export const getCachedProducts = unstable_cache(
   { tags: [PRODUCTS_CACHE_TAG], revalidate: CACHE_SECONDS },
 );
 
+// Sitemap y llms.txt: alcanza con regenerarlos una vez por hora.
+export const SLOW_CACHE_SECONDS = 3600;
+
+/**
+ * El mismo catálogo con una caché de una hora, para sitemap.xml y llms.txt.
+ *
+ * Next toma el revalidate MÁS CORTO entre el de la ruta y el de cada
+ * unstable_cache que usa: con getCachedProducts (60 s) esas rutas se
+ * regeneraban cada minuto aunque declararan 3600/600, y en Vercel cada
+ * regeneración cuenta como escritura ISR. Tiene el MISMO tag, así que un cambio
+ * desde el panel (invalidarProductos) también la tira al instante.
+ */
+export const getCachedProductsSlow = unstable_cache(
+  fetchProductsFromDb,
+  ['productos-listado-lento'],
+  { tags: [PRODUCTS_CACHE_TAG], revalidate: SLOW_CACHE_SECONDS },
+);
+
 /**
  * Tira la caché del catálogo. Se llama desde el panel después de crear, editar,
  * borrar o cambiar la disponibilidad de un producto.

@@ -149,7 +149,7 @@ function QuantityInput({
   }, [formatted]);
 
   function apply() {
-    const parsed = parseQuantityInput(draft);
+    const parsed = parseQuantityInput(draft, displayUnit);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       setDraft(formatted);
       return;

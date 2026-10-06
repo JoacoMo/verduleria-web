@@ -289,6 +289,14 @@ header .container {
   pointer-events: none;
 }
 
+/* Con el carrito abierto el aviso va arriba, debajo del encabezado del panel:
+   abajo tapaba el subtotal, el envío y el total del pie del carrito. */
+.toast-region.is-over-cart {
+  top: 84px;
+  bottom: auto;
+  max-width: min(392px, calc(100vw - 48px));
+}
+
 .toast {
   display: flex;
   align-items: center;
@@ -360,8 +368,12 @@ main h2 svg {
 
 .store-rules strong { color: var(--chalkboard); }
 
+/* "Próxima entrega" se calcula recién al montar: la línea queda reservada desde
+   el HTML del servidor (dos renglones, lo que ocupa en una tarjeta angosta) para
+   que al aparecer no empuje la página. */
 .store-rule-extra {
   display: block;
+  min-height: 2.7em;
   margin-top: 3px;
   font-size: 0.82rem;
   color: var(--leaf-dark);
@@ -385,6 +397,29 @@ main h2 svg {
 }
 
 .repeat-order-btn:hover { background: var(--leaf); color: #fff; }
+
+/* En la página, "Repetir mi último pedido" flota abajo a la izquierda, frente al
+   botón del carrito: sale de localStorage después de montar y, dentro del flujo,
+   corría todo el contenido de abajo (CLS). Solo aparece con el carrito vacío. */
+.repeat-order-chip {
+  position: fixed;
+  left: 20px;
+  bottom: 22px;
+  z-index: 150;
+  margin: 0;
+  max-width: calc(100vw - 120px);
+  line-height: 1.25;
+  text-align: left;
+  box-shadow: 0 6px 16px rgba(30, 46, 34, 0.25);
+  animation: chip-in 0.25s ease both;
+}
+
+.repeat-order-chip svg { flex-shrink: 0; }
+
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* ---- Buscador y filtros ---- */
 .search-bar {
@@ -499,6 +534,11 @@ main h2 svg {
 }
 
 .product-card:hover { transform: translateY(-4px); }
+
+/* Las que pasan del límite inicial están en el HTML (para los buscadores) pero
+   plegadas hasta "Ver todos los productos". Con display: none el navegador no
+   baja sus fotos (van con loading="lazy"). */
+.product-card.is-collapsed { display: none; }
 
 .product-card-offer { border-bottom-color: var(--radish); }
 
@@ -1502,6 +1542,15 @@ main h2 svg {
 
 .checkout-notice-actions button:hover { background: var(--radish); color: #fff; }
 
+.checkout-notice-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--touch);
+  font-weight: 700;
+  color: var(--leaf-dark);
+}
+
 /* ---- Paso "Tus datos" ---- */
 .checkout-back-btn {
   display: inline-flex;
@@ -1627,6 +1676,32 @@ main h2 svg {
   font-size: 0.85rem;
   color: var(--ink-muted);
 }
+
+/* "¡Bajó el precio de X!" en la confirmación. */
+.confirmation-good-news {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--leaf-wash);
+  border: 1px solid var(--leaf-light);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--leaf-dark);
+}
+
+.confirmation-good-news p { margin: 0 0 6px; }
+
+.confirmation-good-news p:last-child { margin-bottom: 0; }
+
+.confirmation-good-news ul { margin: 0 0 6px; padding-left: 18px; }
+
+.confirmation-good-news-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.confirmation-good-news-title svg { flex-shrink: 0; color: var(--leaf); }
 
 .confirmation-block {
   margin-top: 14px;
@@ -2449,6 +2524,10 @@ button {
 
   .store-rules li:last-child { grid-column: 1 / -1; }
 
+  /* La tarjeta de entregas es la última: a todo el ancho "Próxima entrega" entra
+     en un renglón, que es lo que se reserva. */
+  .store-rule-extra { min-height: 1.35em; }
+
   .bolsones-section { padding: 18px 14px 20px; margin-left: -6px; margin-right: -6px; }
 
   .contact-section,
@@ -2466,7 +2545,8 @@ button {
 
   .status-dot,
   .status-dot::after,
-  .toast {
+  .toast,
+  .repeat-order-chip {
     animation: none;
   }
   .status-dot::after { opacity: 0; }

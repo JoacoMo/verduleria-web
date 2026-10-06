@@ -29,11 +29,21 @@ export function useToast() {
   return { toast, showToast };
 }
 
-export function Toast({ toast }: { toast: ToastState }) {
+type ToastProps = {
+  toast: ToastState;
+  /**
+   * Con el carrito abierto el aviso sube y queda debajo del encabezado del panel:
+   * abajo tapaba el subtotal, el envío y el total del pie. No se oculta porque a
+   * veces dice algo que no se ve en otro lado ("2 productos sin stock hoy").
+   */
+  overCart?: boolean;
+};
+
+export function Toast({ toast, overCart = false }: ToastProps) {
   // El contenedor role="status" queda siempre montado: los lectores de pantalla
   // solo anuncian cambios dentro de una región que ya existía.
   return (
-    <div className="toast-region" role="status" aria-live="polite">
+    <div className={`toast-region ${overCart ? 'is-over-cart' : ''}`} role="status" aria-live="polite">
       {toast ? (
         <div className="toast" key={toast.id}>
           <CircleCheck size={18} aria-hidden="true" /> {toast.text}

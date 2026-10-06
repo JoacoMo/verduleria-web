@@ -1,4 +1,4 @@
-import { logSecurityEvent } from './security-log';
+import { clientSubject, logSecurityEvent } from './security-log';
 
 /**
  * Limitador de intentos en memoria.
@@ -7,6 +7,7 @@ import { logSecurityEvent } from './security-log';
  * esto NO es un límite global exacto: si hay varias instancias activas, un atacante
  * podría hacer N veces el límite. Igual sube muchísimo el costo de un ataque de
  * fuerza bruta contra el login y frena el spam de pedidos desde un mismo cliente.
+ * Para los pedidos hay además topes en la base (ORDER_CAPS), que sí son globales.
  *
  * Para un límite real y distribuido hay que apoyarse en algo compartido
  * (Vercel Firewall con rate limiting, o Upstash Redis). Ver README.
@@ -17,17 +18,42 @@ type Bucket = {
   resetAt: number;
 };
 
+/**
+ * Un Map recorre en orden de inserción, y cada uso de una clave la vuelve a
+ * insertar al final: el principio del Map son siempre las que hace más que no
+ * se usan. Eso permite un tope real sin recorrerlo entero en cada request.
+ */
 const buckets = new Map<string, Bucket>();
 
-// Evita que el Map crezca sin control si el proceso vive mucho tiempo.
+// Tope de claves vivas. Por encima, se descartan las que hace más que no se usan.
 const MAX_BUCKETS = 5000;
+// El barrido de vencidas recorre el Map entero: como mucho una vez cada tanto,
+// no en cada request (antes, con más de 5000 claves vivas, cada request lo
+// recorría sin liberar nada).
+const SWEEP_EVERY_MS = 10_000;
+let lastSweepAt = 0;
 
-function cleanupExpired(now: number) {
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= now) {
-      buckets.delete(key);
+function pruneBuckets(now: number) {
+  if (buckets.size <= MAX_BUCKETS) return;
+
+  if (now - lastSweepAt >= SWEEP_EVERY_MS || now < lastSweepAt) {
+    lastSweepAt = now;
+    for (const [key, bucket] of buckets) {
+      if (bucket.resetAt <= now) buckets.delete(key);
     }
   }
+
+  // Si siguen sobrando (muchos clientes a la vez), se descartan los que hace más
+  // que no aparecen. Cuesta lo que sobra, no el tamaño del Map.
+  for (const key of buckets.keys()) {
+    if (buckets.size <= MAX_BUCKETS) break;
+    buckets.delete(key);
+  }
+}
+
+/** Cuántas claves tiene el limitador en memoria (para tests y diagnóstico). */
+export function rateLimitBucketCount() {
+  return buckets.size;
 }
 
 export type RateLimitResult = {
@@ -38,18 +64,18 @@ export type RateLimitResult = {
 
 export function checkRateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
   const now = Date.now();
-
-  if (buckets.size > MAX_BUCKETS) {
-    cleanupExpired(now);
-  }
-
   const existing = buckets.get(key);
 
   if (!existing || existing.resetAt <= now) {
+    buckets.delete(key);
     buckets.set(key, { count: 1, resetAt: now + windowMs });
+    pruneBuckets(now);
     return { ok: true, remaining: limit - 1, retryAfterSeconds: 0 };
   }
 
+  // Al final del Map: es la más recién usada.
+  buckets.delete(key);
+  buckets.set(key, existing);
   existing.count += 1;
 
   if (existing.count > limit) {
@@ -95,8 +121,14 @@ export function getClientIp(request: Request) {
 export const RATE_LIMITS = {
   /** Login: lo más sensible, es la única barrera contra fuerza bruta. */
   login: { limit: 8, windowMs: 10 * 60 * 1000 },
-  /** Crear pedidos. */
-  checkout: { limit: 12, windowMs: 10 * 60 * 1000 },
+  /**
+   * Intentos de checkout, válidos o no. Generoso a propósito: un cliente que
+   * corrige el formulario, o que recibe un 409 de precios o un turno vencido, no
+   * puede quedarse sin cupo (y con CGNAT varios clientes comparten la IP).
+   */
+  checkout: { limit: 30, windowMs: 10 * 60 * 1000 },
+  /** Pedidos creados de verdad: se consume justo antes de grabar el pedido. */
+  checkoutCreate: { limit: 6, windowMs: 10 * 60 * 1000 },
   /** Lecturas públicas (catálogo, datos del local). */
   publicRead: { limit: 120, windowMs: 60 * 1000 },
   /** Lecturas del panel (pedidos, sesión): el panel refresca seguido. */
@@ -105,9 +137,32 @@ export const RATE_LIMITS = {
   adminWrite: { limit: 60, windowMs: 60 * 1000 },
   /** Subida de imágenes: cara en ancho de banda y storage. */
   upload: { limit: 20, windowMs: 10 * 60 * 1000 },
+  /** Cron de limpieza: Vercel lo llama una vez por día; más que esto es alguien probando el secreto. */
+  cron: { limit: 10, windowMs: 10 * 60 * 1000 },
+} as const;
+
+/**
+ * Topes de pedidos que se cuentan en la base (POST /api/checkout). A diferencia
+ * del rate limit en memoria, sobreviven a los cold starts y valen para todas
+ * las instancias y todas las IPs.
+ */
+export const ORDER_CAPS = {
+  /** Pedidos no cancelados de un mismo teléfono en 24 h. */
+  perPhone: { limit: 5, windowMs: 24 * 60 * 60 * 1000 },
+  /** Pedidos de toda la tienda en la última hora: por encima, es un ataque. */
+  global: { limit: 150, windowMs: 60 * 60 * 1000 },
 } as const;
 
 export type RateLimitPreset = keyof typeof RATE_LIMITS;
+
+/**
+ * Clave del límite para una IP. En IPv6 cada cliente recibe un /64 entero
+ * (2^64 direcciones): contar por dirección exacta le daba a un atacante un cupo
+ * nuevo por cada dirección. Se agrupa por /64; las IPv4 quedan igual.
+ */
+export function rateLimitSubject(ip: string) {
+  return clientSubject(ip);
+}
 
 /**
  * Aplica el límite y devuelve una respuesta 429 lista, o null si puede seguir.
@@ -115,24 +170,10 @@ export type RateLimitPreset = keyof typeof RATE_LIMITS;
  * Uso en un handler:
  *   const limited = enforceRateLimit(request, 'adminWrite');
  *   if (limited) return limited;
+ *
+ * El evento de seguridad del 429 se muestrea (ver security-log.ts): una ráfaga
+ * deja una línea por minuto y por cliente, no una por request.
  */
-/**
- * Clave del límite para una IP. En IPv6 cada cliente recibe un /64 entero
- * (2^64 direcciones): contar por dirección exacta le daba a un atacante un cupo
- * nuevo por cada dirección. Se agrupa por /64; las IPv4 quedan igual.
- */
-export function rateLimitSubject(ip: string) {
-  if (!ip.includes(':')) return ip;
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
-  if (mapped) return mapped[1];
-  const [head = '', tail = ''] = ip.toLowerCase().split('::', 2);
-  const headParts = head ? head.split(':') : [];
-  const tailParts = tail ? tail.split(':') : [];
-  const zeros = Array(Math.max(0, 8 - headParts.length - tailParts.length)).fill('0');
-  const groups = [...headParts, ...zeros, ...tailParts].slice(0, 4).map((group) => group.replace(/^0+(?=.)/, ''));
-  return `${groups.join(':')}::/64`;
-}
-
 export function enforceRateLimit(request: Request, preset: RateLimitPreset, message?: string) {
   const { limit, windowMs } = RATE_LIMITS[preset];
   const ip = getClientIp(request);

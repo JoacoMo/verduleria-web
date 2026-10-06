@@ -9,6 +9,7 @@ import {
   isOfferActive,
   lineTotal,
   roundMoney,
+  splitPriceChanges,
   sumLines,
   type PricedProduct,
   type ShippingConfig,
@@ -305,5 +306,37 @@ describe('detectPriceChanges', () => {
   // detectPriceChanges se quedaba con la ÚLTIMA (409 falso).
   it('con ids repetidos compara contra la primera aparición, igual que buildOrderLines', () => {
     expect(detectPriceChanges([{ id: 1, price: 1000 }, { id: 1, price: 1 }], lines)).toEqual([]);
+  });
+});
+
+describe('splitPriceChanges', () => {
+  const lines = [
+    { id: 1, name: 'Tomate', price: 1000, quantity: 1, unit: 'kg' as const },
+    { id: 2, name: 'Uva', price: 2500, quantity: 1, unit: 'kg' as const },
+    { id: 3, name: 'Acelga', price: 900, quantity: 1, unit: 'atado' as const },
+  ];
+
+  it('separa lo que subió (frena el pedido) de lo que bajó (se cobra el menor)', () => {
+    // Tomate subió de 800 a 1000; la uva entró en oferta (3000 → 2500); la acelga sigue igual.
+    const changes = detectPriceChanges([{ id: 1, price: 800 }, { id: 2, price: 3000 }, { id: 3, price: 900 }], lines);
+    expect(splitPriceChanges(changes)).toEqual({
+      increases: [{ id: 1, name: 'Tomate', previousPrice: 800, currentPrice: 1000 }],
+      drops: [{ id: 2, name: 'Uva', previousPrice: 3000, currentPrice: 2500 }],
+    });
+  });
+
+  it('solo bajas: no hay nada que frene el pedido', () => {
+    const changes = detectPriceChanges([{ id: 2, price: 3000 }], lines);
+    expect(splitPriceChanges(changes)).toEqual({ increases: [], drops: [{ id: 2, name: 'Uva', previousPrice: 3000, currentPrice: 2500 }] });
+  });
+
+  it('un centavo de más ya es una suba; diferencias de redondeo no son nada', () => {
+    expect(splitPriceChanges(detectPriceChanges([{ id: 1, price: 999.99 }], lines)).increases).toHaveLength(1);
+    expect(splitPriceChanges(detectPriceChanges([{ id: 1, price: 1000.01 }], lines)).drops).toHaveLength(1);
+    expect(splitPriceChanges(detectPriceChanges([{ id: 1, price: 999.995 }], lines))).toEqual({ increases: [], drops: [] });
+  });
+
+  it('sin cambios, listas vacías', () => {
+    expect(splitPriceChanges([])).toEqual({ increases: [], drops: [] });
   });
 });

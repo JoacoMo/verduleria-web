@@ -1,14 +1,51 @@
 'use client';
 
 import type { Ref } from 'react';
-import { Banknote, CalendarClock, CircleCheckBig, Landmark, MapPin, Scale, Star, Store } from 'lucide-react';
+import { Banknote, CalendarClock, CircleCheckBig, Clock, Landmark, MapPin, Scale, Star, Store, TrendingDown } from 'lucide-react';
 import { WhatsAppIcon } from '@/components/brand-icons';
 import { describeSlot } from '@/lib/delivery-slots';
 import { formatArs } from '@/lib/format-price';
-import type { StoreInfo } from '@/lib/types';
+import type { PriceChange } from '@/lib/pricing';
+import { PRODUCT_UNIT_LABELS } from '@/lib/product-units';
+import type { OrderItem, StoreInfo } from '@/lib/types';
 import CopyButton from './copy-button';
 import OrderSummary from './order-summary';
 import type { OrderConfirmationData } from './types';
+
+/** ["a", "b", "c"] → "a, b y c". */
+function joinNames(names: string[]) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
+}
+
+/**
+ * "¡Bajó el precio de Tomate!": algo bajó entre que armó el carrito y confirmó.
+ * El pedido ya quedó con el precio menor (el servidor no lo frena por eso).
+ */
+function PriceDropsNote({ drops, items }: { drops: PriceChange[]; items: OrderItem[] }) {
+  if (drops.length === 0) return null;
+  const units = new Map(items.map((item) => [item.id, item.unit]));
+  return (
+    <div className="confirmation-good-news">
+      <p className="confirmation-good-news-title">
+        <TrendingDown size={18} aria-hidden="true" />
+        <strong>¡Bajó el precio de {joinNames(drops.map((drop) => drop.name))}!</strong>
+      </p>
+      <ul>
+        {drops.map((drop) => {
+          const unit = units.get(drop.id);
+          const per = unit ? ` / ${PRODUCT_UNIT_LABELS[unit]}` : '';
+          return (
+            <li key={drop.id}>
+              {drop.name}: antes {formatArs(drop.previousPrice)}{per}, ahora <strong>{formatArs(drop.currentPrice)}{per}</strong>
+            </li>
+          );
+        })}
+      </ul>
+      <p>Ya te lo cobramos al precio nuevo.</p>
+    </div>
+  );
+}
 
 type OrderConfirmationProps = {
   confirmation: OrderConfirmationData;
@@ -20,7 +57,7 @@ type OrderConfirmationProps = {
 
 /** Pantalla final: número de pedido, cómo sigue, cómo se paga y el botón de WhatsApp. */
 export default function OrderConfirmation({ confirmation, storeInfo, imagesById, headingRef, onContinue }: OrderConfirmationProps) {
-  const { order, whatsappUrl, hasWeightItems, customerAddress } = confirmation;
+  const { order, whatsappUrl, hasWeightItems, customerAddress, pickupReady } = confirmation;
   const isDelivery = order.deliveryMethod === 'delivery';
   const isTransfer = order.paymentMethod === 'transfer';
   const alias = order.transferAlias || storeInfo.transferAlias;
@@ -34,6 +71,8 @@ export default function OrderConfirmation({ confirmation, storeInfo, imagesById,
       {order.yaExistia ? (
         <p className="confirmation-note">Este pedido ya estaba registrado, no se duplicó.</p>
       ) : null}
+
+      <PriceDropsNote drops={order.priceDrops} items={order.items} />
 
       <p>
         Te abrimos WhatsApp con el detalle del pedido para que nos lo mandes. Si no se abrió, tocá el botón:
@@ -52,10 +91,19 @@ export default function OrderConfirmation({ confirmation, storeInfo, imagesById,
             ) : null}
           </>
         ) : (
-          <p>
-            <Store size={18} aria-hidden="true" />
-            <span>Pasá a buscarlo por {storeInfo.storeAddress}. {storeInfo.storeHours.weekday}.</span>
-          </p>
+          <>
+            <p>
+              <Store size={18} aria-hidden="true" />
+              <span>
+                Pasá a buscarlo por {storeInfo.storeAddress}
+                {pickupReady ? <>: lo tenés listo <strong>{pickupReady}</strong>.</> : '.'}
+              </span>
+            </p>
+            <p>
+              <Clock size={18} aria-hidden="true" />
+              <span>{storeInfo.storeHours.weekday}. {storeInfo.storeHours.sunday}.</span>
+            </p>
+          </>
         )}
       </div>
 

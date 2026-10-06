@@ -21,7 +21,10 @@ export type CheckoutOutcome =
   | { kind: 'price-changed'; message: string; changes: PriceChange[] }
   | { kind: 'unavailable'; message: string; ids: number[] }
   | { kind: 'slot'; message: string; availableSlots: DeliverySlot[] }
+  /** 429: muchos intentos seguidos, o el tope de pedidos por teléfono. */
   | { kind: 'rate-limited'; message: string }
+  /** 503 con mensaje: el tope global de pedidos por hora (spam). */
+  | { kind: 'busy'; message: string }
   | { kind: 'invalid'; message: string }
   | { kind: 'network' }
   | { kind: 'server-error' };
@@ -84,6 +87,12 @@ function toCheckoutResponse(data: unknown, request: CheckoutRequest): CheckoutRe
     whatsappNumber: text(value.whatsappNumber),
     storeName: text(value.storeName),
     yaExistia: value.yaExistia === true,
+    // Precios que bajaron entre que el cliente armó el carrito y confirmó: se
+    // cobra el menor y se le avisa en la confirmación. Solo bajas (las subas
+    // frenan el pedido con un 409).
+    priceDrops: Array.isArray(value.priceDrops)
+      ? value.priceDrops.filter(isPriceChange).filter((change) => change.currentPrice < change.previousPrice)
+      : [],
   };
 }
 
@@ -110,6 +119,78 @@ export function createIdempotencyKey() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Marca de "la respuesta no se pudo leer como JSON". */
+export const UNREADABLE_BODY = Symbol('cuerpo ilegible');
+
+/**
+ * Traduce la respuesta del servidor (status + cuerpo ya leído) a un resultado.
+ * Es pura (sin fetch ni window) para poder testear cada caso.
+ */
+export function interpretCheckoutResponse(
+  status: number,
+  data: unknown,
+  request: CheckoutRequest,
+): CheckoutOutcome {
+  const ok = status >= 200 && status < 300;
+
+  if (data === UNREADABLE_BODY) {
+    // Si la respuesta era un 200 y se cortó a mitad de camino, el pedido puede
+    // haberse creado: se trata como corte de red para reintentar con la misma clave.
+    if (ok) return { kind: 'network' };
+    if (status === 429) return { kind: 'rate-limited', message: RATE_LIMITED_MESSAGE };
+    if (status >= 500) return { kind: 'server-error' };
+    return { kind: 'invalid', message: INVALID_MESSAGE };
+  }
+
+  if (ok) {
+    const order = toCheckoutResponse(data, request);
+    return order ? { kind: 'ok', data: order } : { kind: 'server-error' };
+  }
+
+  const body = (data && typeof data === 'object' ? data : {}) as ErrorBody;
+  const message = typeof body.error === 'string' && body.error.trim() ? body.error : '';
+
+  if (status === 429) {
+    return { kind: 'rate-limited', message: message || RATE_LIMITED_MESSAGE };
+  }
+
+  // El tope global de pedidos por hora responde 503 con un mensaje para el
+  // cliente. Un 503 sin mensaje (de la plataforma) es un error común.
+  if (status === 503 && message) {
+    return { kind: 'busy', message };
+  }
+
+  if (body.code === 'PRECIOS_CAMBIARON' && Array.isArray(body.priceChanges)) {
+    return {
+      kind: 'price-changed',
+      message: message || 'Cambiaron algunos precios mientras armabas el pedido.',
+      changes: body.priceChanges.filter(isPriceChange),
+    };
+  }
+
+  if (body.code === 'SIN_STOCK' && Array.isArray(body.unavailableIds)) {
+    return {
+      kind: 'unavailable',
+      message: message || 'Algunos productos se quedaron sin stock.',
+      ids: body.unavailableIds.map(Number).filter((id) => Number.isInteger(id) && id > 0),
+    };
+  }
+
+  if (body.code === 'TURNO_NO_DISPONIBLE') {
+    return {
+      kind: 'slot',
+      message: message || 'El turno que elegiste ya no está disponible.',
+      availableSlots: Array.isArray(body.availableSlots) ? body.availableSlots.filter(isDeliverySlot) : [],
+    };
+  }
+
+  if (status >= 400 && status < 500) {
+    return { kind: 'invalid', message: message || INVALID_MESSAGE };
+  }
+
+  return { kind: 'server-error' };
+}
+
 export async function postCheckout(request: CheckoutRequest): Promise<CheckoutOutcome> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), CHECKOUT_TIMEOUT_MS);
@@ -127,59 +208,13 @@ export async function postCheckout(request: CheckoutRequest): Promise<CheckoutOu
       return { kind: 'network' };
     }
 
-    let data: unknown = null;
+    let data: unknown;
     try {
       data = await response.json();
     } catch {
-      // Si la respuesta era un 200 y se cortó a mitad de camino, el pedido puede
-      // haberse creado: se trata como corte de red para reintentar con la misma clave.
-      if (response.ok) return { kind: 'network' };
-      if (response.status === 429) return { kind: 'rate-limited', message: RATE_LIMITED_MESSAGE };
-      if (response.status >= 500) return { kind: 'server-error' };
-      return { kind: 'invalid', message: INVALID_MESSAGE };
+      data = UNREADABLE_BODY;
     }
-
-    if (response.ok) {
-      const order = toCheckoutResponse(data, request);
-      return order ? { kind: 'ok', data: order } : { kind: 'server-error' };
-    }
-
-    const body = (data ?? {}) as ErrorBody;
-    const message = typeof body.error === 'string' && body.error.trim() ? body.error : '';
-
-    if (response.status === 429) {
-      return { kind: 'rate-limited', message: message || RATE_LIMITED_MESSAGE };
-    }
-
-    if (body.code === 'PRECIOS_CAMBIARON' && Array.isArray(body.priceChanges)) {
-      return {
-        kind: 'price-changed',
-        message: message || 'Cambiaron algunos precios mientras armabas el pedido.',
-        changes: body.priceChanges.filter(isPriceChange),
-      };
-    }
-
-    if (body.code === 'SIN_STOCK' && Array.isArray(body.unavailableIds)) {
-      return {
-        kind: 'unavailable',
-        message: message || 'Algunos productos se quedaron sin stock.',
-        ids: body.unavailableIds.map(Number).filter((id) => Number.isInteger(id) && id > 0),
-      };
-    }
-
-    if (body.code === 'TURNO_NO_DISPONIBLE') {
-      return {
-        kind: 'slot',
-        message: message || 'El turno que elegiste ya no está disponible.',
-        availableSlots: Array.isArray(body.availableSlots) ? body.availableSlots.filter(isDeliverySlot) : [],
-      };
-    }
-
-    if (response.status >= 400 && response.status < 500) {
-      return { kind: 'invalid', message: message || INVALID_MESSAGE };
-    }
-
-    return { kind: 'server-error' };
+    return interpretCheckoutResponse(response.status, data, request);
   } finally {
     window.clearTimeout(timeout);
   }

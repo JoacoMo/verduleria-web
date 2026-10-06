@@ -220,6 +220,34 @@ export function parseOfferEndsAt(value: unknown, now: Date = new Date()): Date |
   return endsAt;
 }
 
+/**
+ * Saca los espacios y tabs del final de un renglón recorriendo de atrás para
+ * adelante. Lineal a propósito: /[ \t]+$/ (o /[ \t]+\n/g) prueba desde cada
+ * posición y con "a" + 99.000 espacios + "a" tardaba segundos (ReDoS).
+ */
+function trimLineEnd(line: string) {
+  let end = line.length;
+  while (end > 0 && (line[end - 1] === ' ' || line[end - 1] === '\t')) end -= 1;
+  return end === line.length ? line : line.slice(0, end);
+}
+
+/**
+ * Renglones sin espacios al final y nunca más de un renglón en blanco seguido
+ * (el equivalente lineal de .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')).
+ */
+function tidyMultilineText(text: string) {
+  const lines: string[] = [];
+  let previousBlank = false;
+  for (const raw of text.split('\n')) {
+    const line = trimLineEnd(raw);
+    const blank = line === '';
+    if (blank && previousBlank) continue;
+    lines.push(line);
+    previousBlank = blank;
+  }
+  return lines.join('\n');
+}
+
 /** undefined = no vino; null o "" = sin descripción. */
 function parseDescription(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
@@ -228,12 +256,16 @@ function parseDescription(value: unknown): string | null | undefined {
     throw new ValidationError('La descripción tiene que ser texto.');
   }
 
+  // Corte barato ANTES de cualquier regex o limpieza: nada legítimo se acerca a
+  // esto (el tope real, después de limpiar, es MAX_DESCRIPTION_LENGTH).
+  if (value.length > MAX_DESCRIPTION_LENGTH * 4) {
+    throw new ValidationError(`La descripción puede tener hasta ${MAX_DESCRIPTION_LENGTH} caracteres (tiene ${value.length}).`);
+  }
+
   // Se permiten saltos de línea (en los bolsones se usan para listar qué trae),
   // pero no más de una línea en blanco seguida. No se recorta en silencio: si
   // el texto es largo se avisa, para que el dueño no pierda el final sin darse cuenta.
-  const clean = (sanitizeText(value.replace(/\r\n?/g, '\n'), { maxLength: Number.MAX_SAFE_INTEGER }) ?? '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n');
+  const clean = tidyMultilineText(sanitizeText(value.replace(/\r\n?/g, '\n'), { maxLength: Number.MAX_SAFE_INTEGER }) ?? '');
 
   if (clean.length > MAX_DESCRIPTION_LENGTH) {
     throw new ValidationError(`La descripción puede tener hasta ${MAX_DESCRIPTION_LENGTH} caracteres (tiene ${clean.length}).`);
@@ -678,15 +710,37 @@ export function parseCheckoutCart(value: unknown): CheckoutCartItem[] {
 
 const MAX_ADJUSTMENT_ITEMS = 100;
 
-export type OrderAdjustmentRequest = Array<{ id: number; quantity: number }>;
+export type OrderAdjustmentItem = { id: number; quantity: number };
+
+export type OrderAdjustmentRequest = {
+  items: OrderAdjustmentItem[];
+  /**
+   * El updatedAt del pedido que tenía el panel al abrir el editor. El ajuste
+   * solo se graba si el pedido sigue en esa versión: si mientras tanto otro
+   * dispositivo lo ajustó, confirmó o canceló, no se pisa en silencio.
+   */
+  expectedUpdatedAt: Date;
+};
+
+// toISOString() del panel ("2026-10-06T14:05:09.123Z"); se acepta también con offset.
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+
+function parseExpectedUpdatedAt(value: unknown): Date {
+  const date = typeof value === 'string' && ISO_TIMESTAMP_PATTERN.test(value) ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    throw new ValidationError('Falta la versión del pedido que estabas editando. Recargá el panel y volvé a cargar los pesos.');
+  }
+  return date;
+}
 
 /**
- * Forma del ajuste: `{ items: [{ id, quantity }] }`. Que los ids sean del
- * pedido y la normalización por unidad se resuelven con los ítems guardados
- * (applyOrderAdjustment en order-lifecycle.ts).
+ * Forma del ajuste: `{ items: [{ id, quantity }], expectedUpdatedAt }`. Que los
+ * ids sean del pedido y la normalización por unidad se resuelven con los ítems
+ * guardados (applyOrderAdjustment en order-lifecycle.ts).
  */
 export function parseOrderAdjustment(payload: unknown): OrderAdjustmentRequest {
-  const items = (payload as { items?: unknown } | null)?.items;
+  const body = (payload !== null && typeof payload === 'object' ? payload : {}) as { items?: unknown; expectedUpdatedAt?: unknown };
+  const { items } = body;
   if (!Array.isArray(items)) {
     throw new ValidationError('Mandá la lista de productos del pedido con sus cantidades.');
   }
@@ -695,7 +749,7 @@ export function parseOrderAdjustment(payload: unknown): OrderAdjustmentRequest {
   }
 
   const seen = new Set<number>();
-  return items.map((raw) => {
+  const parsedItems = items.map((raw): OrderAdjustmentItem => {
     const item = (raw !== null && typeof raw === 'object' ? raw : {}) as { id?: unknown; quantity?: unknown };
     const id = sanitizeId(item.id);
     if (id === null) {
@@ -712,6 +766,8 @@ export function parseOrderAdjustment(payload: unknown): OrderAdjustmentRequest {
     }
     return { id, quantity };
   });
+
+  return { items: parsedItems, expectedUpdatedAt: parseExpectedUpdatedAt(body.expectedUpdatedAt) };
 }
 
 /* -------------------------------------------------------------------------- */

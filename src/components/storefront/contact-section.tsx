@@ -1,10 +1,10 @@
-import { Clock, Mail, MapPin, Store, TriangleAlert, Truck } from 'lucide-react';
+import { Clock, Mail, MapPin, Store, Truck } from 'lucide-react';
 import { WhatsAppIcon } from '@/components/brand-icons';
 import { DELIVERY_WINDOWS_TEXT } from '@/lib/delivery-slots';
-import { ORDER_CUTOFF_LABEL } from '@/lib/store-hours';
 import type { StoreInfo } from '@/lib/types';
 import { buildWhatsappUrl } from '@/lib/whatsapp';
 import { formatPhoneForDisplay } from './format';
+import { PICKUP_CUTOFF_RULE } from './pickup-text';
 
 const MAP_DIRECTIONS_URL = 'https://maps.google.com/?cid=899078826367002557';
 const MAP_EMBED_URL = 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d4211.8315560727915!2d-64.16876892364488!3d-31.41596097426193!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x9432a2a385140651%3A0xc7a2b6dd6ae27bd!2sEl%20Pampa!5e1!3m2!1ses!2sar!4v1785775498093!5m2!1ses!2sar';
@@ -12,8 +12,11 @@ const ICON_SIZE = 20;
 
 type ContactSectionProps = {
   storeInfo: StoreInfo;
-  /** null hasta montar: "Abierto ahora" depende de la hora del navegador. */
-  storeStatus: { open: boolean; pastCutoff: boolean } | null;
+  /**
+   * null hasta montar: "Abierto ahora" y cuándo está listo un retiro
+   * (describePickupReady, "mañana desde las 8:00") dependen de la hora.
+   */
+  storeStatus: { open: boolean; pickupReady: string } | null;
 };
 
 /** "Dónde estamos": dirección, contacto, horarios y mapa. */
@@ -62,11 +65,15 @@ export default function ContactSection({ storeInfo, storeStatus }: ContactSectio
           <span>Envíos a domicilio en dos turnos: de {DELIVERY_WINDOWS_TEXT}.</span>
         </p>
         <p className="order-cutoff-note">
-          <TriangleAlert size={18} aria-hidden="true" />
+          <Store size={18} aria-hidden="true" />
+          {/* Antes de montar va la regla general (sale igual en el servidor y en el
+              navegador); después, el caso concreto de ahora, que el domingo a la
+              tarde ya no dice "hoy". */}
           <span>
-            {storeStatus?.pastCutoff
-              ? `Ya pasaron las ${ORDER_CUTOFF_LABEL}: si pedís para retirar, lo preparamos mañana. Para envío elegís el turno al hacer el pedido.`
-              : `Los pedidos para retirar que lleguen después de las ${ORDER_CUTOFF_LABEL} se preparan al día siguiente. Para envío elegís el turno al hacer el pedido.`}
+            {storeStatus
+              ? <>Si pedís ahora para retirar, lo tenés listo <strong>{storeStatus.pickupReady}</strong>.</>
+              : `Los pedidos para retirar que llegan ${PICKUP_CUTOFF_RULE} se preparan en el día; los demás, el próximo día que abrimos.`}
+            {' '}Para envío elegís el turno al hacer el pedido.
           </span>
         </p>
       </div>

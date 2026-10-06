@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/auth';
 import { enforceRateLimit, getClientIp } from '@/lib/rate-limit';
 import { logSecurityEvent } from '@/lib/security-log';
+import { readBodyLimited } from '@/lib/request-body';
 import { detectImageType, type AllowedImageType } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -19,9 +20,15 @@ const EXTENSION_BY_TYPE: Record<AllowedImageType, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
 };
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+// 4 MB y no 5: Vercel corta cualquier cuerpo de más de 4,5 MB con su propio 413
+// (que no es JSON y el panel mostraba como un error genérico). Con el margen del
+// multipart sigue entrando debajo de ese límite. El panel comprime a WebP de
+// 800 px antes de subir, así que una foto real queda muy por debajo.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 // Margen para los bordes del multipart (nombre del campo, boundary, etc.).
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
+const TOO_LARGE_MESSAGE = 'La imagen no puede superar los 4 MB.';
+const UNREADABLE_MESSAGE = 'No se pudo leer la imagen enviada.';
 // El nombre de cada archivo es único y nunca se reescribe: el navegador y la
 // CDN de Supabase lo pueden cachear un año.
 const IMAGE_CACHE_SECONDS = 365 * 24 * 60 * 60;
@@ -127,18 +134,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'La subida de imágenes no está configurada.' }, { status: 500 });
   }
 
-  // formData() lee el cuerpo entero a memoria: si el tamaño declarado ya se pasa,
-  // se corta antes de leerlo.
-  const declaredLength = Number(request.headers.get('content-length') ?? '0');
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES) {
-    return NextResponse.json({ error: 'La imagen no puede superar los 5 MB.' }, { status: 413 });
+  // request.formData() lee el cuerpo entero a memoria sin tope. Se lee primero
+  // con un contador de bytes que corta el stream apenas se pasa (también sin
+  // Content-Length, con Transfer-Encoding: chunked) y recién después se arma el
+  // multipart con lo leído.
+  const body = await readBodyLimited(request, MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES);
+  if (!body.ok) {
+    return body.reason === 'demasiado_grande'
+      ? NextResponse.json({ error: TOO_LARGE_MESSAGE }, { status: 413 })
+      : NextResponse.json({ error: UNREADABLE_MESSAGE }, { status: 400 });
   }
 
   let file: FormDataEntryValue | null;
   try {
-    file = (await request.formData()).get('file');
+    const contentType = request.headers.get('content-type') ?? '';
+    file = (await new Response(body.bytes, { headers: { 'content-type': contentType } }).formData()).get('file');
   } catch {
-    return NextResponse.json({ error: 'No se pudo leer la imagen enviada.' }, { status: 400 });
+    return NextResponse.json({ error: UNREADABLE_MESSAGE }, { status: 400 });
   }
 
   if (!(file instanceof File)) {
@@ -153,7 +165,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'La imagen está vacía.' }, { status: 400 });
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: 'La imagen no puede superar los 5 MB.' }, { status: 400 });
+    return NextResponse.json({ error: TOO_LARGE_MESSAGE }, { status: 413 });
   }
 
   try {

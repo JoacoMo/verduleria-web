@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getUpcomingSlots, type DeliverySlot } from '@/lib/delivery-slots';
+import { correctedNow } from './use-client-clock';
 
 /** Cuántos turnos se le ofrecen al cliente. */
 const SLOTS_TO_SHOW = 4;
 
 /**
  * Si el servidor rechazó un turno, manda la lista que él considera válida. Se usa
- * esa durante un rato (el reloj del celular puede estar corrido) y después se
- * vuelve a calcular en el navegador.
+ * esa durante un rato y después se vuelve a calcular en el navegador. Como el
+ * reloj ya viene corregido con la hora del servidor (useClientClock), la lista
+ * recalculada coincide con la del servidor aunque el celular tenga la hora mal.
  */
 const SERVER_SLOTS_TTL_MS = 10 * 60_000;
 
@@ -53,7 +55,9 @@ export function useDeliverySlots(clientNow: Date | null) {
 
   /** Respuesta TURNO_NO_DISPONIBLE: se muestra la lista del servidor y se pide elegir de nuevo. */
   const replaceWithServerSlots = useCallback((availableSlots: DeliverySlot[]) => {
-    setServerSlots({ slots: availableSlots.slice(0, SLOTS_TO_SHOW), receivedAt: Date.now() });
+    // Con el mismo reloj que clientNow (corregido): con Date.now() a secas, un
+    // celular atrasado horas daba la lista del servidor por vencida al instante.
+    setServerSlots({ slots: availableSlots.slice(0, SLOTS_TO_SHOW), receivedAt: correctedNow().getTime() });
     setSelectedSlotId(null);
     setSelectionExpired(false);
   }, []);

@@ -11,20 +11,13 @@ import {
 } from '@/lib/order-options';
 import type { StoreInfo } from '@/lib/types';
 import { DeliveryMethodPicker } from './delivery-options';
-import { CHECKOUT_FIELD_IDS, type CheckoutField, type CheckoutFormState } from './use-checkout-form';
+import { CHECKOUT_FIELD_IDS, type CheckoutFormState } from './use-checkout-form';
 import type { DeliverySlotsState } from './use-delivery-slots';
 
 export const CHECKOUT_FORM_ID = 'checkout-form';
 
-/** Lleva el foco (y el scroll) al campo con error. */
-export function focusCheckoutField(field: CheckoutField) {
-  const element = field === 'deliverySlot'
-    ? document.querySelector<HTMLElement>(`#${CHECKOUT_FIELD_IDS.deliverySlot} input`)
-    : document.getElementById(CHECKOUT_FIELD_IDS[field]);
-  if (!element) return;
-  element.focus({ preventScroll: true });
-  element.scrollIntoView({ block: 'center', behavior: 'smooth' });
-}
+// focusCheckoutField vive en checkout-focus.ts: lo usa la tienda al confirmar y
+// así este formulario se carga recién con el carrito.
 
 type FieldProps = {
   id: string;

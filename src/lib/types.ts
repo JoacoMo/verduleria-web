@@ -84,6 +84,9 @@ export type ProductPayload = {
   available?: boolean;
 };
 
+/** Un precio que cambió entre lo que vio el cliente en el carrito y lo que se cobra. */
+export type CheckoutPriceChange = { id: number; name: string; previousPrice: number; currentPrice: number };
+
 /** Respuesta exitosa de POST /api/checkout. */
 export type CheckoutResponse = {
   orderId: number;
@@ -100,13 +103,23 @@ export type CheckoutResponse = {
   storeName: string;
   /** true si la clave de idempotencia ya tenía un pedido (reintento). */
   yaExistia?: boolean;
+  /**
+   * Productos que bajaron de precio mientras el cliente armaba el carrito: el
+   * pedido se creó con el precio menor (los ítems ya lo traen) y la tienda se
+   * lo cuenta. Vacío si no bajó nada, y siempre vacío en un reintento (yaExistia).
+   */
+  priceDrops: CheckoutPriceChange[];
 };
 
-/** Respuesta 409 de POST /api/checkout cuando cambió algún precio. */
+/**
+ * Respuesta 409 de POST /api/checkout cuando algún precio SUBIÓ (si solo
+ * bajaron, el pedido se crea). `priceChanges` trae todos los que cambiaron,
+ * también los que bajaron, para que el carrito quede con el total real.
+ */
 export type CheckoutPriceChangedResponse = {
   error: string;
   code: 'PRECIOS_CAMBIARON';
-  priceChanges: Array<{ id: number; name: string; previousPrice: number; currentPrice: number }>;
+  priceChanges: CheckoutPriceChange[];
 };
 
 /** Respuesta 409 de POST /api/checkout cuando algo se quedó sin stock o dejó de existir. */

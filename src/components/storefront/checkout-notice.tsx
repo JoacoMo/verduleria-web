@@ -1,6 +1,7 @@
 'use client';
 
 import { CalendarClock, CircleAlert, RefreshCw, X } from 'lucide-react';
+import { WhatsAppIcon } from '@/components/brand-icons';
 import { formatArs } from '@/lib/format-price';
 import type { CartItem, CheckoutNotice } from './types';
 
@@ -81,6 +82,13 @@ export default function CheckoutNoticeBox({ notice }: { notice: CheckoutNotice }
         <CircleAlert size={18} aria-hidden="true" /> No pudimos registrar el pedido
       </p>
       <p>{notice.message}</p>
+      {notice.contactUrl ? (
+        <p>
+          <a className="checkout-notice-link" href={notice.contactUrl} target="_blank" rel="noopener noreferrer">
+            <WhatsAppIcon size={16} /> Escribinos por WhatsApp
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

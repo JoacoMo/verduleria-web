@@ -92,6 +92,23 @@ describeDb('POST /api/gestion/products', () => {
     const broken = await createProductRoute(apiRequest('/api/gestion/products', { method: 'POST', rawBody: '{"name":', cookie: adminCookie() }));
     expect(broken.status).toBe(400);
   });
+
+  // Era un ReDoS: con "a" + 99.000 espacios + "a" la limpieza de la descripción
+  // bloqueaba el proceso ~4,5 s (y con él cualquier request público).
+  it('descripción de ~100 KB de espacios → 400 al instante (crear y editar)', async () => {
+    const product = await createProduct({ price: 1000 });
+    for (const description of [' '.repeat(100 * 1024 - 200), `a${' '.repeat(99_000)}a`]) {
+      const started = performance.now();
+      const created = await createProductRoute(send('/api/gestion/products', 'POST', { name: 'Prueba ReDoS', price: 100, unit: 'kg', category: 'Verduras', description }));
+      const edited = await put(product.id, { description });
+      expect(performance.now() - started).toBeLessThan(100);
+      for (const response of [created, edited]) {
+        expect(response.status).toBe(400);
+        expect(await readJson(response)).toEqual({ error: `La descripción puede tener hasta 500 caracteres (tiene ${description.length}).` });
+      }
+    }
+    expect(await prisma.product.count({ where: { name: 'Prueba ReDoS' } })).toBe(0);
+  });
 });
 
 describeDb('PUT /api/gestion/products/[id]', () => {

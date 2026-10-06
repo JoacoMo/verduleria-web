@@ -114,7 +114,7 @@ describe('POST /api/gestion/upload-product-image: subidas válidas', () => {
       id: 'product-images',
       name: 'product-images',
       public: true,
-      file_size_limit: 5 * 1024 * 1024,
+      file_size_limit: 4 * 1024 * 1024,
       allowed_mime_types: ['image/webp', 'image/jpeg', 'image/png'],
     });
   });
@@ -165,16 +165,70 @@ describe('POST /api/gestion/upload-product-image: rechazos antes de llegar a Sto
     expect(fake).not.toHaveBeenCalled();
   });
 
-  it('más de 5 MB → 400 (por tamaño real) y 413 (por Content-Length declarado)', async () => {
+  // 4 MB y no 5: Vercel corta los cuerpos de más de 4,5 MB con su propio 413.
+  it('más de 4 MB → 413 (por tamaño real del archivo, por el cuerpo y por Content-Length declarado)', async () => {
     const { POST } = await loadRoute();
     const fake = mockStorage();
-    const big = await POST(uploadRequest(file(bytes(PNG, 5 * 1024 * 1024 + 1), 'image/png')));
-    expect(big.status).toBe(400);
-    expect(await readJson(big)).toEqual({ error: 'La imagen no puede superar los 5 MB.' });
+    const justOver = await POST(uploadRequest(file(bytes(PNG, 4 * 1024 * 1024 + 1), 'image/png')));
+    expect(justOver.status).toBe(413);
+    expect(await readJson(justOver)).toEqual({ error: 'La imagen no puede superar los 4 MB.' });
+
+    const big = await POST(uploadRequest(file(bytes(PNG, 5 * 1024 * 1024), 'image/png')));
+    expect(big.status).toBe(413);
+    expect(await readJson(big)).toEqual({ error: 'La imagen no puede superar los 4 MB.' });
 
     const declared = await POST(uploadRequest(file(bytes(PNG), 'image/png'), { headers: { 'content-length': String(6 * 1024 * 1024) } }));
     expect(declared.status).toBe(413);
     expect(fake).not.toHaveBeenCalled();
+  });
+
+  it('justo 4 MB entra', async () => {
+    const { POST } = await loadRoute();
+    mockStorage({ status: 200 }, { status: 200 });
+    expect((await POST(uploadRequest(file(bytes(PNG, 4 * 1024 * 1024), 'image/png')))).status).toBe(200);
+  });
+
+  // Era un bug: sin Content-Length, formData() leía el cuerpo entero a memoria.
+  it('cuerpo chunked (sin Content-Length) de 20 MB → 413 sin leerlo entero', async () => {
+    const { POST } = await loadRoute();
+    const fake = mockStorage();
+    const CHUNK = 64 * 1024;
+    let produced = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (produced >= 20 * 1024 * 1024) {
+          controller.close();
+          return;
+        }
+        produced += CHUNK;
+        controller.enqueue(new Uint8Array(CHUNK));
+      },
+    });
+    const request = new Request('http://localhost/api/gestion/upload-product-image', {
+      method: 'POST',
+      headers: { cookie: adminCookie(), 'content-type': 'multipart/form-data; boundary=x', 'x-forwarded-for': '10.250.0.1' },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit);
+    const response = await POST(request);
+    expect(response.status).toBe(413);
+    expect(produced).toBeLessThanOrEqual(4 * 1024 * 1024 + 64 * 1024 + 2 * CHUNK);
+    expect(fake).not.toHaveBeenCalled();
+  });
+
+  it('una imagen chica sin Content-Length (chunked) se lee igual', async () => {
+    const { POST } = await loadRoute();
+    mockStorage({ status: 200 }, { status: 200 });
+    // El multipart serializado por el propio Request, pasado como stream sin largo.
+    const multipart = uploadRequest(file(bytes(PNG), 'image/png'));
+    const request = new Request(multipart.url, {
+      method: 'POST',
+      headers: { cookie: adminCookie(), 'content-type': multipart.headers.get('content-type') ?? '', 'x-forwarded-for': '10.250.0.2' },
+      body: multipart.body,
+      duplex: 'half',
+    } as RequestInit);
+    expect(request.headers.get('content-length')).toBeNull();
+    expect((await POST(request)).status).toBe(200);
   });
 });
 

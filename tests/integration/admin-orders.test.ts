@@ -1,22 +1,36 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GET as listOrders } from '@/app/api/gestion/orders/route';
+import { GET as listOverdue } from '@/app/api/gestion/orders/atrasados/route';
 import { DELETE as deleteOrderRoute, PUT as adjustOrderRoute } from '@/app/api/gestion/orders/[id]/route';
 import { PUT as confirmRoute } from '@/app/api/gestion/orders/[id]/confirm/route';
 import { PUT as cancelRoute } from '@/app/api/gestion/orders/[id]/cancel/route';
+import { MAX_OVERDUE_ORDERS } from '@/lib/order-lifecycle';
 import { getArgentinaParts } from '@/lib/store-hours';
 import type { OrderRecord } from '@/lib/types';
-import { adminCookie, apiRequest, createOrder, createProduct, describeDb, prisma, readJson, routeParams } from './helpers';
+import { adminCookie, apiRequest, createOrder, createProduct, describeDb, freezeTime, prisma, readJson, routeParams } from './helpers';
 
 const confirm = (id: number | string) => confirmRoute(apiRequest(`/api/gestion/orders/${id}/confirm`, { method: 'PUT', cookie: adminCookie() }), routeParams(id));
 const cancel = (id: number | string) => cancelRoute(apiRequest(`/api/gestion/orders/${id}/cancel`, { method: 'PUT', cookie: adminCookie() }), routeParams(id));
-const adjust = (id: number | string, body: unknown) =>
+/** PUT con el cuerpo tal cual (para probar cuerpos inválidos y versiones viejas). */
+const adjustRaw = (id: number | string, body: unknown) =>
   adjustOrderRoute(apiRequest(`/api/gestion/orders/${id}`, { method: 'PUT', body, cookie: adminCookie() }), routeParams(id));
+/** Versión del pedido como la tiene el panel (OrderRecord.updatedAt). */
+const versionOf = async (id: number) => (await prisma.order.findUniqueOrThrow({ where: { id } })).updatedAt.toISOString();
+/** Ajuste desde un editor recién abierto: manda la versión actual del pedido. */
+const adjust = async (id: number, items: unknown) => adjustRaw(id, { items, expectedUpdatedAt: await versionOf(id) });
 const remove = (id: number | string) => deleteOrderRoute(apiRequest(`/api/gestion/orders/${id}`, { method: 'DELETE', cookie: adminCookie() }), routeParams(id));
 const list = (query = '') => listOrders(apiRequest(`/api/gestion/orders${query}`, { cookie: adminCookie() }));
+const idsOf = async (response: Response) => (await readJson<OrderRecord[]>(response)).map((order) => order.id);
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const CHANGED = { error: 'El pedido cambió mientras lo editabas. Recargá para ver la última versión.' };
 
 describeDb('GET /api/gestion/orders', () => {
   it('pedidos del día: los que entraron hoy y los que se entregan ese día', async () => {
@@ -41,6 +55,62 @@ describeDb('GET /api/gestion/orders', () => {
     expect(body).not.toContain('secreta-');
     expect(body).not.toContain('idempotencyKey');
     expect(body).not.toContain('mp-123');
+  });
+
+  // Era un bug: la tienda promete que un retiro que entra después del corte se
+  // prepara al día siguiente, pero el panel solo lo mostraba el día que entró.
+  it('retiro del domingo a las 15 (el local cerró a las 14) aparece el lunes; el de la mañana, no', async () => {
+    const sundayAfternoon = await createOrder({ deliveryMethod: 'pickup', createdAt: new Date('2026-10-04T18:00:00Z') }); // 15:00
+    const sundayAtClose = await createOrder({ deliveryMethod: 'pickup', createdAt: new Date('2026-10-04T17:00:00Z') }); // 14:00 justo
+    const sundayMorning = await createOrder({ deliveryMethod: 'pickup', createdAt: new Date('2026-10-04T13:00:00Z') }); // 10:00
+    // Un envío del domingo a la tarde para el martes: aparece el martes (por el turno), no el lunes.
+    const sundayDelivery = await createOrder({
+      deliveryMethod: 'delivery',
+      deliverySlot: '2026-10-06T13',
+      customerAddress: 'Calle 1',
+      createdAt: new Date('2026-10-04T18:00:00Z'),
+    });
+    try {
+      const sunday = await idsOf(await list('?date=2026-10-04'));
+      expect(sunday).toEqual(expect.arrayContaining([sundayAfternoon.id, sundayAtClose.id, sundayMorning.id, sundayDelivery.id]));
+
+      const monday = await idsOf(await list('?date=2026-10-05'));
+      expect(monday).toEqual(expect.arrayContaining([sundayAfternoon.id, sundayAtClose.id]));
+      expect(monday).not.toContain(sundayMorning.id);
+      expect(monday).not.toContain(sundayDelivery.id);
+
+      const tuesday = await idsOf(await list('?date=2026-10-06'));
+      expect(tuesday).toContain(sundayDelivery.id);
+      expect(tuesday).not.toContain(sundayAfternoon.id);
+    } finally {
+      await prisma.order.deleteMany({ where: { id: { in: [sundayAfternoon.id, sundayAtClose.id, sundayMorning.id, sundayDelivery.id] } } });
+    }
+  });
+
+  it('retiro del lunes desde las 19:00 aparece el martes; el de las 18:59, solo el lunes', async () => {
+    const before = await createOrder({ deliveryMethod: 'pickup', createdAt: new Date('2026-10-05T21:59:00Z') }); // 18:59
+    const atCutoff = await createOrder({ deliveryMethod: 'pickup', createdAt: new Date('2026-10-05T22:00:00Z') }); // 19:00
+    const late = await createOrder({ deliveryMethod: 'pickup', paymentMethod: 'cash', createdAt: new Date('2026-10-05T23:30:00Z') }); // 20:30
+    try {
+      const tuesday = await idsOf(await list('?date=2026-10-06'));
+      expect(tuesday).toEqual(expect.arrayContaining([atCutoff.id, late.id]));
+      expect(tuesday).not.toContain(before.id);
+      // El lunes siguen apareciendo los tres (entraron ese día).
+      expect(await idsOf(await list('?date=2026-10-05'))).toEqual(expect.arrayContaining([before.id, atCutoff.id, late.id]));
+    } finally {
+      await prisma.order.deleteMany({ where: { id: { in: [before.id, atCutoff.id, late.id] } } });
+    }
+  });
+
+  it('el turno se busca por igualdad: un turno que no es de ese día (aunque empiece igual) no aparece', async () => {
+    const real = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-20T19', customerAddress: 'Calle 1' });
+    const bogus = await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2031-02-20T15', customerAddress: 'Calle 1' });
+    try {
+      const day = await idsOf(await list('?date=2031-02-20'));
+      expect(day).toEqual([real.id]);
+    } finally {
+      await prisma.order.deleteMany({ where: { id: { in: [real.id, bogus.id] } } });
+    }
   });
 
   it('fecha inválida → 400', async () => {
@@ -72,43 +142,95 @@ describeDb('PUT /api/gestion/orders/[id]: ajuste con los pesos reales', () => {
     const { order, tomate, acelga } = await weightOrder();
     await prisma.product.update({ where: { id: tomate.id }, data: { price: 5000 } });
 
-    const response = await adjust(order.id, { items: [{ id: tomate.id, quantity: 1.37 }, { id: acelga.id, quantity: 1 }] });
+    const response = await adjust(order.id, [{ id: tomate.id, quantity: 1.37 }, { id: acelga.id, quantity: 1 }]);
     expect(response.status).toBe(200);
     const record = await readJson<OrderRecord>(response);
     expect(record.items).toEqual([
-      { id: tomate.id, name: tomate.name, price: 1000, quantity: 1.35, unit: 'kg' },
+      { id: tomate.id, name: tomate.name, price: 1000, quantity: 1.37, unit: 'kg' },
       { id: acelga.id, name: acelga.name, price: 900, quantity: 1, unit: 'atado' },
     ]);
-    expect(record).toMatchObject({ id: order.id, subtotal: 2250, shippingCost: 4000, total: 6250, status: 'pending' });
+    expect(record).toMatchObject({ id: order.id, subtotal: 2270, shippingCost: 4000, total: 6270, status: 'pending' });
     expect(record.adjustedAt).toEqual(expect.any(String));
-    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ subtotal: 2250, total: 6250 });
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ subtotal: 2270, total: 6270 });
+  });
+
+  // Era un bug: el peso real se redondeaba a 50 g (11,237 kg → 11,25 kg).
+  it('guarda el peso de la balanza (5 g), no el redondeo de 50 g del carrito', async () => {
+    const { order, tomate } = await weightOrder();
+    const record = await readJson<OrderRecord>(await adjust(order.id, [{ id: tomate.id, quantity: 11.237 }]));
+    expect(record.items).toEqual([expect.objectContaining({ id: tomate.id, quantity: 11.235 })]);
+    expect(record).toMatchObject({ subtotal: 11_235, total: 15_235 });
   });
 
   it('cantidad 0 saca el ítem; no se pueden agregar productos nuevos ni dejarlo vacío', async () => {
     const { order, tomate, acelga } = await weightOrder();
-    const removed = await readJson<OrderRecord>(await adjust(order.id, { items: [{ id: tomate.id, quantity: 0 }, { id: acelga.id, quantity: 2 }] }));
+    const removed = await readJson<OrderRecord>(await adjust(order.id, [{ id: tomate.id, quantity: 0 }, { id: acelga.id, quantity: 2 }]));
     expect(removed.items.map((item) => item.id)).toEqual([acelga.id]);
 
-    const intruder = await adjust(order.id, { items: [{ id: acelga.id, quantity: 1 }, { id: 99_999_999, quantity: 1 }] });
+    const intruder = await adjust(order.id, [{ id: acelga.id, quantity: 1 }, { id: 99_999_999, quantity: 1 }]);
     expect(intruder.status).toBe(400);
     expect(await readJson(intruder)).toEqual({ error: 'El producto 99999999 no estaba en el pedido. Solo se pueden ajustar los que pidió el cliente.' });
 
-    const empty = await adjust(order.id, { items: [] });
+    const empty = await adjust(order.id, []);
     expect(empty.status).toBe(400);
     expect(await readJson(empty)).toEqual({ error: 'El pedido tiene que quedar con al menos un producto. Si no se lleva nada, cancelalo.' });
   });
 
   it('pedido pagado o cancelado → 409; "con problema" se puede ajustar', async () => {
     const paid = await weightOrder({ status: 'paid' });
-    const response = await adjust(paid.order.id, { items: [{ id: paid.tomate.id, quantity: 1 }] });
+    const response = await adjust(paid.order.id, [{ id: paid.tomate.id, quantity: 1 }]);
     expect(response.status).toBe(409);
     expect(await readJson(response)).toEqual({ error: 'El pedido ya figura como "Pagado". Solo se pueden ajustar pedidos pendientes.' });
 
     const cancelled = await weightOrder({ status: 'cancelled' });
-    expect((await adjust(cancelled.order.id, { items: [{ id: cancelled.tomate.id, quantity: 1 }] })).status).toBe(409);
+    expect((await adjust(cancelled.order.id, [{ id: cancelled.tomate.id, quantity: 1 }])).status).toBe(409);
 
     const failed = await weightOrder({ status: 'failed' });
-    expect((await adjust(failed.order.id, { items: [{ id: failed.tomate.id, quantity: 1 }] })).status).toBe(200);
+    expect((await adjust(failed.order.id, [{ id: failed.tomate.id, quantity: 1 }])).status).toBe(200);
+  });
+
+  // Era un bug: el servidor comparaba contra lo que él mismo acababa de leer, y
+  // un editor abierto hacía rato pisaba en silencio el ajuste de otro dispositivo.
+  it('editor viejo (otro dispositivo ajustó después de abrirlo) → 409 sin pisar nada; con la versión nueva, entra', async () => {
+    const { order, tomate, acelga } = await weightOrder();
+    const openedAt = order.updatedAt.toISOString();
+
+    const other = await adjustRaw(order.id, { items: [{ id: tomate.id, quantity: 12 }, { id: acelga.id, quantity: 2 }], expectedUpdatedAt: openedAt });
+    expect(other.status).toBe(200);
+    const otherRecord = await readJson<OrderRecord>(other);
+
+    const stale = await adjustRaw(order.id, { items: [{ id: tomate.id, quantity: 11.25 }, { id: acelga.id, quantity: 3 }], expectedUpdatedAt: openedAt });
+    expect(stale.status).toBe(409);
+    expect(await readJson(stale)).toEqual(CHANGED);
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({
+      items: [expect.objectContaining({ id: tomate.id, quantity: 12 }), expect.objectContaining({ id: acelga.id, quantity: 2 })],
+      total: 12_000 + 1_800 + 4000,
+    });
+
+    // Recargó: con la versión que devolvió el otro ajuste, sí se guarda.
+    const fresh = await adjustRaw(order.id, { items: [{ id: tomate.id, quantity: 11.25 }, { id: acelga.id, quantity: 3 }], expectedUpdatedAt: otherRecord.updatedAt });
+    expect(fresh.status).toBe(200);
+    expect(await readJson(fresh)).toMatchObject({ total: 11_250 + 2_700 + 4000 });
+  });
+
+  it('confirmado mientras el editor estaba abierto → 409 con el estado, sin tocar el pedido', async () => {
+    const { order, tomate } = await weightOrder();
+    const openedAt = order.updatedAt.toISOString();
+    expect((await confirm(order.id)).status).toBe(200);
+    const response = await adjustRaw(order.id, { items: [{ id: tomate.id, quantity: 1 }], expectedUpdatedAt: openedAt });
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toEqual({ error: 'El pedido ya figura como "Pagado". Solo se pueden ajustar pedidos pendientes.' });
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ adjustedAt: null, status: 'paid' });
+  });
+
+  it('sin expectedUpdatedAt (o con basura) → 400, sin tocar el pedido', async () => {
+    const { order, tomate } = await weightOrder();
+    for (const expectedUpdatedAt of [undefined, null, 'ayer', 12345]) {
+      const response = await adjustRaw(order.id, { items: [{ id: tomate.id, quantity: 1 }], expectedUpdatedAt });
+      expect(response.status).toBe(400);
+      expect(await readJson(response)).toEqual({ error: 'Falta la versión del pedido que estabas editando. Recargá el panel y volvé a cargar los pesos.' });
+    }
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).adjustedAt).toBeNull();
   });
 
   it('409 si el pedido cambió entre la lectura y la escritura (otra pestaña)', async () => {
@@ -122,23 +244,110 @@ describeDb('PUT /api/gestion/orders/[id]: ajuste con los pesos reales', () => {
       return snapshot;
     }) as never);
 
-    const response = await adjust(order.id, { items: [{ id: tomate.id, quantity: 1 }] });
+    const response = await adjust(order.id, [{ id: tomate.id, quantity: 1 }]);
     expect(response.status).toBe(409);
-    expect(await readJson(response)).toEqual({ error: 'El pedido cambió mientras lo editabas. Recargá y volvé a cargar los pesos.' });
+    expect(await readJson(response)).toEqual(CHANGED);
     // No se pisó nada.
     expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ adjustedAt: null, notes: 'cambiado en otra pestaña' });
   });
 
   it('body inválido → 400; inexistente → 404; id inválido → 400', async () => {
     const { order } = await weightOrder();
-    expect((await adjust(order.id, { items: 'x' })).status).toBe(400);
-    expect((await adjust(order.id, { items: [{ id: 1, quantity: -1 }] })).status).toBe(400);
+    const version = order.updatedAt.toISOString();
+    expect((await adjustRaw(order.id, { items: 'x', expectedUpdatedAt: version })).status).toBe(400);
+    expect((await adjustRaw(order.id, { items: [{ id: 1, quantity: -1 }], expectedUpdatedAt: version })).status).toBe(400);
     const broken = await adjustOrderRoute(apiRequest(`/api/gestion/orders/${order.id}`, { method: 'PUT', rawBody: '{', cookie: adminCookie() }), routeParams(order.id));
     expect(broken.status).toBe(400);
-    const missing = await adjust(99_999_999, { items: [{ id: 1, quantity: 1 }] });
+    const missing = await adjustRaw(99_999_999, { items: [{ id: 1, quantity: 1 }], expectedUpdatedAt: version });
     expect(missing.status).toBe(404);
     expect(await readJson(missing)).toEqual({ error: 'Pedido no encontrado.' });
-    expect((await adjust('abc', { items: [] })).status).toBe(400);
+    expect((await adjustRaw('abc', { items: [], expectedUpdatedAt: version })).status).toBe(400);
+  });
+});
+
+describeDb('GET /api/gestion/orders/atrasados', () => {
+  /**
+   * "Hoy" simulado: jueves 15/1/2026 a las 12:00 de Córdoba. Es ANTERIOR a los
+   * pedidos que crean los otros tests con la hora real, así que para esta fecha
+   * están en el futuro y no se mezclan. Cada test borra lo que crea (el del cron
+   * también usa enero de 2026).
+   */
+  const TODAY = '2026-01-15T15:00:00.000Z';
+  const overdue = () => listOverdue(apiRequest('/api/gestion/orders/atrasados', { cookie: adminCookie() }));
+
+  it('abiertos de días anteriores, del más viejo al más nuevo; sin los que se arman hoy o más adelante', async () => {
+    freezeTime(TODAY);
+    const orders = {
+      pickupOld: await createOrder({ createdAt: new Date('2026-01-10T15:00:00Z') }),
+      failedOld: await createOrder({ status: 'failed', createdAt: new Date('2026-01-11T15:00:00Z') }),
+      // Envío en efectivo ya entregado (y pesado) que no se marcó pagado.
+      cashDelivered: await createOrder({
+        deliveryMethod: 'delivery',
+        deliverySlot: '2026-01-13T13',
+        customerAddress: 'Calle 1',
+        paymentMethod: 'cash',
+        adjustedAt: new Date('2026-01-13T15:00:00Z'),
+        createdAt: new Date('2026-01-12T15:00:00Z'),
+      }),
+      pickupYesterdayMorning: await createOrder({ createdAt: new Date('2026-01-14T13:00:00Z') }), // miércoles 10:00
+      // No van:
+      pickupYesterdayLate: await createOrder({ createdAt: new Date('2026-01-14T23:30:00Z') }), // 20:30: se arma hoy
+      deliveryToday: await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2026-01-15T19', customerAddress: 'Calle 1', createdAt: new Date('2026-01-14T15:00:00Z') }),
+      deliveryTomorrow: await createOrder({ deliveryMethod: 'delivery', deliverySlot: '2026-01-16T13', customerAddress: 'Calle 1', createdAt: new Date('2026-01-13T15:00:00Z') }),
+      paidOld: await createOrder({ status: 'paid', createdAt: new Date('2026-01-09T15:00:00Z') }),
+      cancelledOld: await createOrder({ status: 'cancelled', createdAt: new Date('2026-01-09T15:00:00Z') }),
+      createdToday: await createOrder({ createdAt: new Date('2026-01-15T12:00:00Z') }),
+    };
+    try {
+      const response = await overdue();
+      expect(response.status).toBe(200);
+      const records = await readJson<OrderRecord[]>(response);
+      const mine = new Set(Object.values(orders).map((order) => order.id));
+      expect(records.filter((record) => mine.has(record.id)).map((record) => record.id)).toEqual([
+        orders.pickupOld.id,
+        orders.failedOld.id,
+        orders.cashDelivered.id,
+        orders.pickupYesterdayMorning.id,
+      ]);
+      expect(records.find((record) => record.id === orders.cashDelivered.id)).toMatchObject({
+        status: 'pending',
+        paymentMethod: 'cash',
+        deliverySlot: '2026-01-13T13',
+        adjustedAt: '2026-01-13T15:00:00.000Z',
+      });
+      expect(JSON.stringify(records)).not.toContain('idempotencyKey');
+    } finally {
+      await prisma.order.deleteMany({ where: { id: { in: Object.values(orders).map((order) => order.id) } } });
+    }
+  });
+
+  it(`hasta ${MAX_OVERDUE_ORDERS}, empezando por los más viejos`, async () => {
+    freezeTime(TODAY);
+    const prefix = `atrasado-${Date.now()}-`;
+    await prisma.order.createMany({
+      data: Array.from({ length: MAX_OVERDUE_ORDERS + 5 }, (_, i) => ({
+        items: [],
+        total: 1000,
+        status: 'pending',
+        deliveryMethod: 'pickup',
+        idempotencyKey: `${prefix}${i}`,
+        createdAt: new Date(Date.UTC(2025, 11, 1, 12, i)),
+      })),
+    });
+    try {
+      const records = await readJson<OrderRecord[]>(await overdue());
+      expect(records).toHaveLength(MAX_OVERDUE_ORDERS);
+      expect(records[0].createdAt).toBe('2025-12-01T12:00:00.000Z');
+      const times = records.map((record) => Date.parse(record.createdAt ?? ''));
+      expect(times).toEqual([...times].sort((a, b) => a - b));
+    } finally {
+      await prisma.order.deleteMany({ where: { idempotencyKey: { startsWith: prefix } } });
+    }
+  });
+
+  it('sin sesión → 401', async () => {
+    const response = await listOverdue(apiRequest('/api/gestion/orders/atrasados'));
+    expect(response.status).toBe(401);
   });
 });
 

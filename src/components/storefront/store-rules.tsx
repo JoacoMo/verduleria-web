@@ -15,6 +15,11 @@ type StoreRulesProps = {
  * Las "reglas del juego" a la vista antes de armar el carrito: cuánto sale el
  * envío, desde cuánto es gratis, en qué horarios se entrega y cómo se paga. Es lo
  * primero que pregunta un cliente nuevo por WhatsApp.
+ *
+ * "Próxima entrega" se sabe recién después de montar. Para que al aparecer no
+ * empuje la página (CLS), su línea está reservada desde el HTML del servidor
+ * (.store-rule-extra tiene alto mínimo) y la tarjeta de entregas va última: en
+ * el celular ocupa todo el ancho y el texto entra en una línea.
  */
 export default function StoreRules({ storeInfo, nextSlot }: StoreRulesProps) {
   return (
@@ -34,17 +39,17 @@ export default function StoreRules({ storeInfo, nextSlot }: StoreRulesProps) {
         <span>Pedido mínimo para envío: <strong>{formatArs(storeInfo.deliveryMinPurchase)}</strong></span>
       </li>
       <li>
+        <Wallet size={ICON_SIZE} aria-hidden="true" />
+        <span>Pagás por <strong>transferencia</strong> o en <strong>efectivo</strong></span>
+      </li>
+      <li className="store-rule-delivery">
         <Clock size={ICON_SIZE} aria-hidden="true" />
         <span>
           Entregas de <strong>{DELIVERY_WINDOWS_TEXT}</strong>
-          {nextSlot ? (
-            <span className="store-rule-extra">Próxima entrega: <strong>{nextSlot.label}</strong></span>
-          ) : null}
+          <span className="store-rule-extra">
+            {nextSlot ? <>Próxima entrega: <strong>{nextSlot.label}</strong></> : null}
+          </span>
         </span>
-      </li>
-      <li>
-        <Wallet size={ICON_SIZE} aria-hidden="true" />
-        <span>Pagás por <strong>transferencia</strong> o en <strong>efectivo</strong></span>
       </li>
     </ul>
   );
