@@ -96,7 +96,8 @@ export function isWeightUnit(unit: ProductUnit): unit is WeightUnit {
 
 export function formatProductQuantity(quantity: number, unit: ProductUnit) {
   if (unit === 'kg') {
-    const formatted = Number.isInteger(quantity) ? quantity.toFixed(0) : quantity.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    // Hasta 3 decimales: un peso de balanza (11,237 kg) se muestra completo.
+    const formatted = Number.isInteger(quantity) ? quantity.toFixed(0) : quantity.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
     return `${formatted.replace('.', ',')} kg`;
   }
 
@@ -124,6 +125,18 @@ export function normalizeProductQuantity(quantity: number, unit: ProductUnit) {
   }
 
   return Math.max(1, Math.round(quantity));
+}
+
+/**
+ * Cantidad PESADA en la balanza (ajuste de pesos reales en el panel): 5 g de
+ * precisión, no los 50 g de lo que pide el cliente. Si no, el "total final" no
+ * era el de la balanza (11,237 kg se guardaba como 11,25 kg).
+ */
+export function normalizeWeighedQuantity(quantity: number, unit: ProductUnit) {
+  if (!Number.isFinite(quantity) || quantity <= 0) return 0;
+  if (unit === 'kg') return Math.max(0.005, Number((Math.round(quantity / 0.005) * 0.005).toFixed(3)));
+  if (unit === 'g') return Math.max(5, Math.round(quantity / 5) * 5);
+  return normalizeProductQuantity(quantity, unit);
 }
 
 /** Peso aproximado en kilos de una línea (0 para lo que va por cantidad). */

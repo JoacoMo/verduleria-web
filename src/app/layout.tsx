@@ -22,6 +22,9 @@ const displayFont = Caveat({
   weight: ['600', '700'],
   display: 'swap',
   variable: '--font-display',
+  // No se precarga: el LCP es texto en Work Sans; precargar esta fuente
+  // demoraba la interactividad en el celular (medido en Fast 3G).
+  preload: false,
 });
 
 const bodyFont = Work_Sans({
@@ -36,6 +39,9 @@ const monoFont = DM_Mono({
   weight: ['400', '500'],
   display: 'swap',
   variable: '--font-mono',
+  // No se precarga: el LCP es texto en Work Sans; precargar esta fuente
+  // demoraba la interactividad en el celular (medido en Fast 3G).
+  preload: false,
 });
 
 const defaultTitle = `${siteConfig.storeName} | Verdulería y frutería en Córdoba Capital`;

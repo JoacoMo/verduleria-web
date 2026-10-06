@@ -27,7 +27,7 @@ export const OPENING_WINDOWS: Record<number, TimeWindow[]> = {
 };
 
 /** Pasados estos minutos del día, un pedido para retirar se prepara al día siguiente. */
-const ORDER_CUTOFF_MINUTES = 19 * 60;
+export const ORDER_CUTOFF_MINUTES = 19 * 60;
 
 export function formatMinutes(minutes: number) {
   const hours = Math.floor(minutes / 60);
@@ -116,6 +116,47 @@ export function isStoreOpenNow(at: Date = new Date()): boolean {
   return windows.some(([start, end]) => minutesOfDay >= start && minutesOfDay < end);
 }
 
+/**
+ * Minuto del día a partir del cual un retiro ya no se prepara ese día: el corte
+ * de las 19:00 o el cierre del local si es antes (el domingo cierra a las 14).
+ * Un día sin horario devuelve 0: nada se prepara ese día.
+ */
+export function pickupCutoffMinutes(dayIndex: number): number {
+  const closes = (OPENING_WINDOWS[dayIndex] ?? []).map(([, close]) => close);
+  return closes.length > 0 ? Math.min(ORDER_CUTOFF_MINUTES, Math.max(...closes)) : 0;
+}
+
 export function isPastOrderCutoff(at: Date = new Date()): boolean {
-  return getArgentinaParts(at).minutesOfDay >= ORDER_CUTOFF_MINUTES;
+  const { dayIndex, minutesOfDay } = getArgentinaParts(at);
+  return minutesOfDay >= pickupCutoffMinutes(dayIndex);
+}
+
+const DAY_NAMES_LOWER = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+/**
+ * Cuándo va a estar listo un pedido para retirar hecho en `at`: "hoy desde las
+ * 17:30", "hoy, en el horario de atención", "mañana desde las 8:00" o "el lunes
+ * desde las 8:00". Se usa en la confirmación, en el mensaje de WhatsApp y en la
+ * sección de contacto, para no prometer algo que contradiga el horario.
+ */
+export function describePickupReady(at: Date = new Date()): string {
+  const { dayIndex, minutesOfDay } = getArgentinaParts(at);
+  const today = OPENING_WINDOWS[dayIndex] ?? [];
+
+  if (minutesOfDay < pickupCutoffMinutes(dayIndex)) {
+    const current = today.find(([open, close]) => minutesOfDay >= open && minutesOfDay < close);
+    if (current) return 'hoy, en el horario de atención';
+    const next = today.find(([open]) => open > minutesOfDay);
+    if (next) return `hoy desde las ${formatMinutes(next[0])}`;
+  }
+
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const nextDay = (dayIndex + offset) % 7;
+    const windows = OPENING_WINDOWS[nextDay] ?? [];
+    if (windows.length > 0) {
+      const when = offset === 1 ? 'mañana' : `el ${DAY_NAMES_LOWER[nextDay]}`;
+      return `${when} desde las ${formatMinutes(windows[0][0])}`;
+    }
+  }
+  return 'el próximo día que abrimos';
 }

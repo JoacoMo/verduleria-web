@@ -17,11 +17,29 @@ ALTER TABLE "public"."Order" ADD COLUMN "adjustedAt" TIMESTAMP(3);
 -- Los pedidos que ya existen no tenían envío en el total: subtotal = total.
 UPDATE "public"."Order" SET "subtotal" = "total";
 
--- Estado como enum: la base rechaza cualquier valor que no sea uno de estos
--- cuatro. El código nunca escribió otro, así que la conversión no falla.
-CREATE TYPE "public"."OrderStatus" AS ENUM ('pending', 'paid', 'cancelled', 'failed');
-ALTER TABLE "public"."Order" ALTER COLUMN "status" DROP DEFAULT;
-ALTER TABLE "public"."Order" ALTER COLUMN "status" TYPE "public"."OrderStatus" USING ("status"::"public"."OrderStatus");
-ALTER TABLE "public"."Order" ALTER COLUMN "status" SET DEFAULT 'pending';
+-- Estado: integridad en la base con una restricción CHECK y no con un enum.
+--
+-- Un enum cambia el tipo de la columna: el código que está en producción (que
+-- lee y escribe "status" como texto) fallaba con "Error converting field
+-- status" desde el momento en que se aplicaba la migración hasta que terminaba
+-- el deploy. El CHECK da la misma garantía (la base rechaza cualquier otro
+-- valor) sin cambiar el tipo, así que es compatible con las dos versiones.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM "public"."Order"
+    WHERE "status" NOT IN ('pending', 'paid', 'cancelled', 'failed')
+  ) THEN
+    RAISE EXCEPTION 'Hay pedidos con un estado distinto de pending/paid/cancelled/failed: corregilos antes de migrar.';
+  END IF;
+END $$;
 
+ALTER TABLE "public"."Order"
+  ADD CONSTRAINT "Order_status_check" CHECK ("status" IN ('pending', 'paid', 'cancelled', 'failed'));
+
+-- Índices para las consultas nuevas: limpieza diaria, pedidos por turno en el
+-- panel y tope de pedidos por teléfono en el checkout.
 CREATE INDEX "Order_status_createdAt_idx" ON "public"."Order"("status", "createdAt");
+CREATE INDEX "Order_status_updatedAt_idx" ON "public"."Order"("status", "updatedAt");
+CREATE INDEX "Order_deliverySlot_idx" ON "public"."Order"("deliverySlot");
+CREATE INDEX "Order_customerPhone_createdAt_idx" ON "public"."Order"("customerPhone", "createdAt");

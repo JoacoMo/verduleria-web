@@ -30,13 +30,6 @@ model Product {
   updatedAt   DateTime  @default(now()) @updatedAt
 }
 
-enum OrderStatus {
-  pending
-  paid
-  cancelled
-  failed
-}
-
 model Order {
   id                Int         @id @default(autoincrement())
   items             Json // [{ id, name, price, quantity, unit }]
@@ -47,7 +40,10 @@ model Order {
   // subtotal + shippingCost. En lo que va por peso es estimado hasta que el dueño
   // ajusta el pedido con los pesos reales (adjustedAt deja de ser null).
   total             Float
-  status            OrderStatus @default(pending)
+  // pending | paid | cancelled | failed. Es texto con una restricción CHECK en la
+  // base (ver la migración 20261006120000): un enum de Postgres rompía el código
+  // que estaba en producción durante el deploy.
+  status            String      @default("pending")
   deliveryMethod    String      @default("pickup") // pickup | delivery
   // transfer | cash. Ver src/lib/order-options.ts.
   paymentMethod     String?
@@ -75,6 +71,11 @@ model Order {
   updatedAt         DateTime    @updatedAt
 
   @@index([createdAt])
-  // Para la limpieza diaria de pedidos viejos sin cobrar.
+  // Limpieza diaria: pendientes viejos (por createdAt) y cerrados viejos (por updatedAt).
   @@index([status, createdAt])
+  @@index([status, updatedAt])
+  // Panel: pedidos con turno en un día dado.
+  @@index([deliverySlot])
+  // Checkout: tope de pedidos por teléfono (spam).
+  @@index([customerPhone, createdAt])
 }
