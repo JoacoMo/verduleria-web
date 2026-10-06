@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { siteConfig } from '@/lib/site';
 import { formatArs } from '@/lib/format-price';
 import { buildWhatsappUrl } from '@/lib/whatsapp';
-import { ORDER_CUTOFF_LABEL } from '@/lib/store-hours';
+import { describePickupCutoffRule } from '@/components/storefront/pickup-text';
 import { buildPageMetadata, getDeliveryScheduleText, getFullAddress, getLeadTimeText } from '@/lib/seo';
 
 export const metadata = buildPageMetadata({
@@ -92,8 +92,8 @@ export default function TerminosPage() {
       <h2>Entrega</h2>
       <p>
         <strong>Retiro en el local:</strong> sin costo y sin turno, en {getFullAddress()}, en el horario de atención:{' '}
-        {siteConfig.storeHours.weekday}. {siteConfig.storeHours.sunday}. Los pedidos para retirar que llegan antes de las{' '}
-        {ORDER_CUTOFF_LABEL} se preparan en el día; los que llegan después, a partir del día siguiente.
+        {siteConfig.storeHours.weekday}. {siteConfig.storeHours.sunday}. Los pedidos para retirar que llegan{' '}
+        {describePickupCutoffRule()} se preparan en el día; los que llegan después, a partir del siguiente día de atención.
       </p>
       <p>
         <strong>Envío a domicilio:</strong> dentro de Córdoba Capital, en turnos fijos. {schedule.summary} El cliente

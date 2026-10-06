@@ -91,9 +91,11 @@ Con eso en mente se sacó Mercado Pago y se sumaron turnos, envío fijo, bolsone
   efectivo, qué hacer si falta un producto y aclaraciones.
 - **Total aproximado y total final**: si hay productos por peso, el carrito avisa que el
   total es aproximado y que el local confirma el exacto por WhatsApp después de pesar.
-- **Sin sorpresas de precio**: si el dueño cambió un precio o algo se quedó sin stock
+- **Sin sorpresas de precio**: si el dueño subió un precio o algo se quedó sin stock
   mientras el cliente armaba el carrito, el pedido no se registra; el carrito se
-  actualiza y le muestra qué cambió.
+  actualiza y le muestra qué cambió. Si un precio bajó, se cobra el menor y se le avisa.
+- **Retiro con hora clara**: la confirmación dice cuándo está listo ("hoy desde las
+  17:30", "mañana desde las 8:00"), respetando que el domingo se cierra a las 14.
 - **Mensaje de WhatsApp armado** con el detalle del pedido, la entrega y el pago.
 - Estado del local en vivo, mapa, preguntas frecuentes, términos y privacidad.
 
@@ -102,11 +104,15 @@ Con eso en mente se sacó Mercado Pago y se sumaron turnos, envío fijo, bolsone
 - Alta, edición y baja de productos, con **ofertas con vencimiento**, descripción para
   los bolsones y **subida de imágenes comprimidas a WebP en el navegador**.
 - **Botón de "sin stock" de un toque**, sin entrar a editar el producto.
-- **Pedidos del día agrupados por turno** (envíos de 13 a 14 h, de 19 a 20 h, retiros),
-  con los datos del cliente, el medio de pago y un link directo a su WhatsApp.
-- **Ajuste de pesos reales**: se cargan las cantidades pesadas, se recalcula el total
-  con el precio guardado del pedido y queda marcado como "total final".
-- **"Avisar total final"** y **"Pedir reseña"** con mensajes de WhatsApp ya redactados.
+- **Pedidos del día agrupados por turno** (envíos de 13 a 14 h, de 19 a 20 h, retiros,
+  y los retiros que entraron la noche anterior), con los datos del cliente, el medio de
+  pago y un link directo a su WhatsApp. Un bloque aparte muestra los **pendientes de
+  días anteriores** para que ninguno quede sin resolver.
+- **Ajuste de pesos reales**: se cargan las cantidades pesadas (precisión de 5 g), se
+  recalcula el total con el precio guardado del pedido y queda marcado como "total
+  final". Si el pedido cambió en otro dispositivo mientras se editaba, no se pisa.
+- **"Avisar total final"** (se habilita recién cuando están cargados los pesos) y
+  **"Pedir reseña"**, con mensajes de WhatsApp ya redactados.
 - Resumen del día: cobrado, por cobrar y envíos por turno.
 - **Script de precios** que cruza la lista del Mercado de Abasto con el catálogo y
   actualiza todo junto (ver [abajo](#script-de-actualización-de-precios)).
@@ -263,7 +269,7 @@ con permisos para la API pública**, así una tabla nueva no puede nacer expuest
 | **Rate limiting** | Por tipo de endpoint (login 8 / 10 min, checkout, lecturas, escrituras, subidas), con IPv6 agrupado por /64. |
 | **Validación** | Manual y centralizada ([`validation.ts`](src/lib/validation.ts)): ids estrictos dentro del rango de la base, números sin hexadecimal ni exponentes, precios mayores a 0, fechas reales, textos sin caracteres de control, invisibles ni aislamientos bidi. Solo los errores de validación llegan al cliente; los de Prisma quedan en el log. |
 | **Inyección SQL** | No hay SQL armado a mano en la app: todo pasa por Prisma, que parametriza. |
-| **Uploads** | Solo WebP/JPG/PNG hasta 5 MB, validados por **magic bytes** (no por lo que declara el navegador), con nombre generado en el servidor. |
+| **Uploads** | Solo WebP/JPG/PNG hasta 4 MB (debajo del límite de Vercel), validados por **magic bytes** (no por lo que declara el navegador), con nombre generado en el servidor. Los cuerpos se leen con contador de bytes: un envío *chunked* gigante se corta sin leerse entero. |
 | **XSS** | React escapa todo; el JSON-LD se serializa escapando `<`, `>` y `&`. Los mensajes de WhatsApp que manda el local no copian texto libre del cliente. |
 | **Secretos** | Ninguna variable es `NEXT_PUBLIC_`; los módulos de servidor importan `server-only`, y la CI verifica que ningún nombre ni valor de variable sensible aparezca en el JavaScript del navegador. |
 | **Dependencias** | `npm audit` de producción sin vulnerabilidades (se corrigió una RCE crítica de Next). |
@@ -380,7 +386,7 @@ sea uno de los cuatro. Las migraciones están versionadas en
 |---|---|---|
 | `GET` | `/api/products` | Catálogo (cacheado). Disponibles primero, luego alfabético. |
 | `GET` | `/api/store-info` | Datos públicos del local: horarios, envío, alias. |
-| `POST` | `/api/checkout` | Registra el pedido. Idempotente. 409 si cambió un precio o algo está sin stock; 400 si el turno ya no está disponible. |
+| `POST` | `/api/checkout` | Registra el pedido. Idempotente. 409 si subió un precio (o una baja encarece el total) o algo está sin stock; 400 si el turno ya no está disponible; 429/503 por los topes de spam. Si un precio solo bajó, se cobra el menor y se avisa (`priceDrops`). |
 
 ### Privada (cookie de sesión `httpOnly`)
 
@@ -394,7 +400,8 @@ sea uno de los cuatro. Las migraciones están versionadas en
 | `PUT` | `/api/gestion/products/:id/availability` | Marca un producto como disponible o sin stock. |
 | `POST` | `/api/gestion/products/bulk` | Actualización masiva de precios, stock y ofertas (hasta 500, todo o nada). |
 | `POST` | `/api/gestion/upload-product-image` | Sube una imagen a Supabase Storage. |
-| `GET` | `/api/gestion/orders?date=YYYY-MM-DD` | Pedidos de un día (creados ese día o con turno ese día). |
+| `GET` | `/api/gestion/orders?date=YYYY-MM-DD` | Pedidos de un día: creados ese día, con turno ese día, o retiros que entraron el día anterior después del corte. |
+| `GET` | `/api/gestion/orders/atrasados` | Pedidos abiertos de días anteriores (para que nada quede sin resolver). |
 | `PUT` / `DELETE` | `/api/gestion/orders/:id` | Ajusta los pesos reales / elimina un pedido. |
 | `PUT` | `/api/gestion/orders/:id/confirm` | Marca un pedido como pagado. |
 | `PUT` | `/api/gestion/orders/:id/cancel` | Cancela un pedido. |
@@ -403,7 +410,7 @@ sea uno de los cuatro. Las migraciones están versionadas en
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/api/cron/limpiar-pedidos` | Diario (Vercel Cron, `Authorization: Bearer CRON_SECRET`). Cancela pendientes de más de 7 días y borra cancelados de más de 90. Nunca toca pedidos pagados. |
+| `GET` | `/api/cron/limpiar-pedidos` | Diario (Vercel Cron, `Authorization: Bearer CRON_SECRET`). Cancela los abiertos de más de 7 días salvo los pagados en efectivo o ya pesados (casi seguro se entregaron) y borra los cancelados hace más de 90 días. Nunca toca pedidos pagados ni cancela y borra en la misma corrida. |
 
 Todos los endpoints privados siguen el mismo patrón: verificación de sesión, rate
 limit, validación del cuerpo y `try/catch` con log del error y respuesta genérica.
@@ -578,7 +585,8 @@ variables de entorno y solo viajan por `https://`. Instrucciones para el dueño 
 Decisiones tomadas conscientemente, con su costo:
 
 - **Rate limiting en memoria.** En Vercel cada instancia tiene su propia memoria, así que
-  el límite no es global. El paso siguiente es la regla de Vercel Firewall o Upstash Redis.
+  el límite por IP no es global. Lo compensan los topes contados en la base (5 pedidos
+  por teléfono en 24 h y 150 por hora en total) y la regla de Vercel Firewall recomendada.
 - **Render dinámico en todas las páginas.** La CSP con nonce requiere un valor distinto
   por respuesta y eso impide el prerenderizado estático. Se compensa con la caché del
   catálogo y la región de las funciones junto a la base.
