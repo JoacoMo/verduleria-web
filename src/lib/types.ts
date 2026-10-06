@@ -109,12 +109,20 @@ export type CheckoutResponse = {
    * lo cuenta. Vacío si no bajó nada, y siempre vacío en un reintento (yaExistia).
    */
   priceDrops: CheckoutPriceChange[];
+  /**
+   * Cuándo se creó el pedido (ISO, hora del servidor). La tienda la usa para
+   * decir cuándo está listo un retiro con la misma hora que usa el panel, y no
+   * con el reloj del celular.
+   */
+  createdAt: string;
 };
 
 /**
- * Respuesta 409 de POST /api/checkout cuando algún precio SUBIÓ (si solo
- * bajaron, el pedido se crea). `priceChanges` trae todos los que cambiaron,
- * también los que bajaron, para que el carrito quede con el total real.
+ * Respuesta 409 de POST /api/checkout cuando algún precio SUBIÓ, o cuando una
+ * baja igual cambia el trato (sube el total porque se pierde el envío gratis, o
+ * el envío queda por debajo del mínimo). Si solo bajaron sin nada de eso, el
+ * pedido se crea. `priceChanges` trae todos los que cambiaron, también los que
+ * bajaron, para que el carrito quede con el total real.
  */
 export type CheckoutPriceChangedResponse = {
   error: string;

@@ -8,16 +8,18 @@ import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categori
 import { formatArs } from '@/lib/format-price';
 import { ADMIN_API } from '@/lib/routes';
 import type { AdminClient } from './api';
-import { MAX_IMAGE_WIDTH, compressImageFile } from './image-compression';
+import { MAX_IMAGE_HEIGHT, MAX_IMAGE_WIDTH, MAX_UPLOAD_BYTES, compressImageFile } from './image-compression';
 import { InlineAlert } from './notices';
 import { Field, Spinner, fieldAria } from './fields';
 import { describeDate, getArgentinaToday, parseMoneyInput } from './format';
 import {
   EMPTY_PRODUCT_FORM,
+  IMAGE_TOO_LARGE_MESSAGE,
   MAX_DESCRIPTION_LENGTH,
   discountPercent,
   maxOfferDate,
   productToFormState,
+  uploadErrorMessage,
   validateProductForm,
   type ProductFormErrors,
   type ProductFormState,
@@ -94,6 +96,11 @@ export function ProductForm({ product, client, onSaved, onCancel }: ProductFormP
     setUpload({ status: 'working' });
     try {
       const compressed = await compressImageFile(file);
+      if (compressed.file.size > MAX_UPLOAD_BYTES) {
+        URL.revokeObjectURL(compressed.previewUrl);
+        setUpload({ status: 'error', message: IMAGE_TOO_LARGE_MESSAGE });
+        return;
+      }
       setLocalPreview(compressed.previewUrl);
 
       const data = new FormData();
@@ -101,7 +108,7 @@ export function ProductForm({ product, client, onSaved, onCancel }: ProductFormP
       const result = await client.send<{ url: string }>(`${ADMIN_API}/upload-product-image`, 'POST', data, 'No se pudo subir la imagen.');
       if (!result.ok) {
         setLocalPreview(null);
-        setUpload({ status: 'error', message: result.error });
+        setUpload({ status: 'error', message: uploadErrorMessage(result.status, result.data, result.error) });
         return;
       }
 
@@ -174,7 +181,7 @@ export function ProductForm({ product, client, onSaved, onCancel }: ProductFormP
     ? null
     : upload.status === 'idle' && upload.message
       ? upload.message
-      : `La foto se achica a ${MAX_IMAGE_WIDTH} px de ancho y se sube como WebP para que cargue rápido. Sin foto, se muestra una genérica.`;
+      : `La foto se achica a ${MAX_IMAGE_WIDTH} px de ancho (y ${MAX_IMAGE_HEIGHT} de alto como máximo) y se sube como WebP para que cargue rápido. Sin foto, se muestra una genérica.`;
 
   return (
     <form className="adm-card adm-product-form" onSubmit={handleSubmit} noValidate aria-labelledby={id('title')}>

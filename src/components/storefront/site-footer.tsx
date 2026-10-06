@@ -1,12 +1,17 @@
 import Link from 'next/link';
 import type { StoreInfo } from '@/lib/types';
 
-export default function SiteFooter({ storeInfo }: { storeInfo: StoreInfo }) {
+/**
+ * `year` viene del render del servidor (hora argentina): calcularlo acá con
+ * new Date() daba un año distinto en el servidor (UTC) y en el celular la noche
+ * del 31/12, y React tiraba el HTML entero (error de hidratación).
+ */
+export default function SiteFooter({ storeInfo, year }: { storeInfo: StoreInfo; year: string }) {
   return (
     <footer>
       <div className="container">
         <p>
-          &copy; {new Date().getFullYear()} {storeInfo.storeName}. Verdulería y frutería en {storeInfo.storeNeighborhood}, Córdoba Capital.
+          &copy; {year} {storeInfo.storeName}. Verdulería y frutería en {storeInfo.storeNeighborhood}, Córdoba Capital.
         </p>
         <nav className="footer-links" aria-label="Más información">
           <Link href="/envios">Envíos y turnos</Link>

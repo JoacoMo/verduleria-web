@@ -99,6 +99,22 @@ describe('buildFinalTotalMessage', () => {
     expect(text).toContain('Te pasamos por acá los datos para transferir. Cuando transfieras, mandanos el comprobante.');
   });
 
+  it('sin los pesos cargados no dice "Total final" (defensa: el botón ya está deshabilitado)', () => {
+    const delivery = buildFinalTotalMessage(order({ adjustedAt: null }), STORE);
+    expect(delivery).toContain(`*Total estimado: ${formatArs(6880)}* (envío incluido)`);
+    expect(delivery).not.toContain('Total final');
+
+    const pickup = buildFinalTotalMessage(order({ adjustedAt: null, deliveryMethod: 'pickup', shippingCost: 0, total: 2880, deliverySlot: null }), STORE);
+    expect(pickup).toContain(`*Total estimado: ${formatArs(2880)}*`);
+
+    // Si todo va por unidad, el total es exacto aunque no se haya "ajustado".
+    const exact = buildFinalTotalMessage(
+      order({ adjustedAt: null, items: [{ id: 2, name: 'Acelga', price: 900, quantity: 2, unit: 'atado' }], subtotal: 1800, total: 5800 }),
+      STORE,
+    );
+    expect(exact).toContain(`*Total final: ${formatArs(5800)}*`);
+  });
+
   it('un pedido viejo sin medio de pago se trata como transferencia', () => {
     expect(buildFinalTotalMessage(order({ paymentMethod: null }), STORE)).toContain('Para pagar por transferencia:');
   });

@@ -101,6 +101,7 @@ describeDb('POST /api/checkout: pedidos que entran', () => {
       whatsappNumber: '5493510000000',
       storeName: 'El Pampa',
       priceDrops: [],
+      createdAt: expect.any(String),
     });
     // Nada interno en la respuesta.
     expect(JSON.stringify(data)).not.toContain(payload.idempotencyKey as string);
@@ -124,6 +125,8 @@ describeDb('POST /api/checkout: pedidos que entran', () => {
       adjustedAt: null,
     });
     expect(order.items).toEqual(data.items);
+    // La hora del pedido sale del servidor (la tienda la usa para el aviso del retiro).
+    expect(data.createdAt).toBe(order.createdAt.toISOString());
   });
 
   it('envío con turno: suma el costo fijo y guarda el turno y la dirección', async () => {
@@ -347,7 +350,8 @@ describeDb('POST /api/checkout: idempotencia', () => {
     const retry = await post(payload);
     expect(retry.status).toBe(200);
     const second = await readJson<CheckoutResponse>(retry);
-    expect(second).toMatchObject({ orderId: first.orderId, total: 1000, items: first.items, yaExistia: true });
+    // También la hora original: el aviso del retiro no cambia por reintentar más tarde.
+    expect(second).toMatchObject({ orderId: first.orderId, total: 1000, items: first.items, yaExistia: true, createdAt: first.createdAt });
 
     // Aunque el carrito del reintento sea otro, la clave manda.
     const other = await readJson<CheckoutResponse>(await post({ ...payload, cart: [{ id: product.id, quantity: 9, price: 2000 }] }));

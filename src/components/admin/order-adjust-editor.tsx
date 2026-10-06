@@ -1,134 +1,228 @@
 'use client';
 
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Minus, Plus, Save, Trash2, Undo2 } from 'lucide-react';
-import type { OrderRecord } from '@/lib/types';
-import {
-  PRODUCT_MAX_CART_QUANTITY,
-  PRODUCT_UNIT_LABELS,
-  formatProductQuantity,
-  isWeightUnit,
-  normalizeProductQuantity,
-  type ProductUnit,
-} from '@/lib/product-units';
+import type { OrderItem, OrderRecord } from '@/lib/types';
+import { PRODUCT_UNIT_LABELS, formatProductQuantity, isWeightUnit, type ProductUnit } from '@/lib/product-units';
 import { formatArs } from '@/lib/format-price';
-import { lineTotal, roundMoney, sumLines } from '@/lib/pricing';
+import { lineTotal } from '@/lib/pricing';
 import { InlineAlert } from './notices';
 import { Spinner } from './fields';
 import { formatQuantityInput, parseQuantityInput } from './format';
+import {
+  ADJUST_STEP,
+  adjustmentItems,
+  buildAdjustLines,
+  describeItemChange,
+  diffOrderItems,
+  initialDrafts,
+  isDraftDirty,
+  rebaseDrafts,
+  stepAdjustQuantity,
+  summarizeAdjustLines,
+  type AdjustDraft,
+  type AdjustDrafts,
+  type AdjustedItem,
+} from './order-adjust-model';
+import { clearAdjustDraft, readAdjustDraft, writeAdjustDraft } from './adjust-drafts';
 
-/**
- * Paso de los botones -/+ al cargar el peso real: la balanza mide de a 50 g
- * (es la misma precisión con la que el servidor normaliza), y lo que va por
- * cantidad es siempre entero.
- */
-const ADJUST_STEP: Record<ProductUnit, number> = {
-  kg: 0.05,
-  g: 50,
-  unidad: 1,
-  atado: 1,
-  bandeja: 1,
-};
-
-type Draft = { text: string; removed: boolean };
-
-export type AdjustedItem = { id: number; quantity: number };
+export type { AdjustedItem };
 
 type OrderAdjustEditorProps = {
   order: OrderRecord;
-  /** Devuelve el mensaje de error del servidor, o null si se guardó. */
-  onSave: (items: AdjustedItem[]) => Promise<string | null>;
+  /**
+   * Guarda el ajuste. `expectedUpdatedAt` es la versión del pedido sobre la que
+   * se cargaron los pesos: si en el servidor ya es otra, responde 409 y no pisa
+   * nada. Devuelve el mensaje de error, o null si se guardó.
+   */
+  onSave: (items: AdjustedItem[], expectedUpdatedAt: string | null) => Promise<string | null>;
   onCancel: () => void;
 };
 
-function roundStep(value: number, unit: ProductUnit) {
-  return unit === 'kg' ? Number(value.toFixed(2)) : Math.round(value);
-}
+/** Versión del pedido sobre la que se está tipeando. */
+type Base = { updatedAt: string | null; items: OrderItem[] };
 
+/** Un error vale para la versión del pedido en la que ocurrió (ver más abajo). */
+type EditorError = { message: string; version: string | null };
+
+/**
+ * Editor de los pesos reales de un pedido.
+ *
+ * Versiones: el editor recuerda la versión del pedido (updatedAt) que tenía al
+ * abrirse y es la que manda al guardar. Si el pedido cambia mientras está
+ * abierto (lo trae el refresco de cada minuto, o la recarga después de un 409
+ * porque otro celular guardó antes), avisa qué cambió y no deja guardar hasta
+ * que el dueño elija: seguir con lo que cargó o tomar lo guardado. Lo tipeado
+ * nunca se pierde.
+ *
+ * Borradores: cada cambio se guarda en sessionStorage (adjust-drafts.ts). Si la
+ * sesión vence y hay que volver a entrar, el editor se abre solo con lo cargado.
+ */
 export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditorProps) {
   const baseId = useId();
-  const [drafts, setDrafts] = useState<Record<number, Draft>>(() => Object.fromEntries(
-    order.items.map((item) => [item.id, { text: formatQuantityInput(item.quantity, item.unit), removed: false }]),
-  ));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const lines = order.items.map((item) => {
-    const draft = drafts[item.id] ?? { text: '', removed: false };
-    const parsed = parseQuantityInput(draft.text);
-    const max = PRODUCT_MAX_CART_QUANTITY[item.unit];
-
-    let problem: string | null = null;
-    if (!draft.removed) {
-      if (parsed === null) problem = 'Poné la cantidad (o sacalo del pedido).';
-      else if (Number.isNaN(parsed)) problem = 'Escribí un número.';
-      else if (parsed > max) problem = `Es demasiado: máximo ${formatProductQuantity(max, item.unit)}.`;
+  const [start] = useState(() => {
+    const stored = readAdjustDraft(order.id);
+    if (stored) {
+      return { base: { updatedAt: stored.baseUpdatedAt, items: stored.baseItems }, drafts: stored.drafts, restored: true };
     }
-
-    // Un 0 es lo mismo que sacarlo (así lo toma el servidor).
-    const removed = draft.removed || parsed === 0;
-    const quantity = removed || problem || parsed === null ? 0 : normalizeProductQuantity(parsed, item.unit);
-    const rounded = !removed && !problem && parsed !== null && Math.abs(quantity - parsed) > 1e-9;
-    return { item, draft, problem, removed, quantity, rounded };
+    return { base: { updatedAt: order.updatedAt ?? null, items: order.items }, drafts: initialDrafts(order.items), restored: false };
   });
+  const [base, setBase] = useState<Base>(start.base);
+  const [drafts, setDrafts] = useState<AdjustDrafts>(start.drafts);
+  const [restored, setRestored] = useState(start.restored);
+  const [saving, setSaving] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [error, setError] = useState<EditorError | null>(null);
 
-  const kept = lines.filter((line) => !line.removed && !line.problem);
-  const subtotal = sumLines(kept.map((line) => ({ price: line.item.price, quantity: line.quantity })));
-  const total = roundMoney(subtotal + order.shippingCost);
-  const allRemoved = lines.every((line) => line.removed);
-  const hasProblems = lines.some((line) => line.problem);
+  const currentVersion = order.updatedAt ?? null;
+  const changed = currentVersion !== base.updatedAt && !saving && !closing;
+  const changes = changed ? diffOrderItems(base.items, order.items) : [];
+  const baseById = new Map(base.items.map((item) => [item.id, item]));
+  // Un error es de la versión en la que ocurrió: el 409 "el pedido cambió" se
+  // deja de mostrar cuando llega la versión nueva, y ahí lo reemplaza el aviso
+  // de qué cambió (que es más útil que "recargá").
+  const visibleError = error && error.version === currentVersion ? error.message : null;
+
+  const lines = buildAdjustLines(order.items, drafts);
+  const totals = summarizeAdjustLines(lines, order.shippingCost);
   const isDelivery = order.deliveryMethod === 'delivery';
+  const quantityWord = order.adjustedAt ? 'guardado' : 'pidió';
 
-  function setDraft(id: number, patch: Partial<Draft>) {
-    setDrafts((current) => ({ ...current, [id]: { ...(current[id] ?? { text: '', removed: false }), ...patch } }));
-    setError('');
+  useEffect(() => {
+    if (isDraftDirty(drafts, base.items)) {
+      writeAdjustDraft({ orderId: order.id, baseUpdatedAt: base.updatedAt, baseItems: base.items, drafts });
+    } else {
+      clearAdjustDraft(order.id);
+    }
+  }, [order.id, drafts, base]);
+
+  function setDraft(id: number, patch: Partial<AdjustDraft>) {
+    setDrafts((current) => {
+      const item = order.items.find((entry) => entry.id === id);
+      const previous = current[id] ?? { text: item ? formatQuantityInput(item.quantity, item.unit) : '', removed: false };
+      return { ...current, [id]: { ...previous, ...patch } };
+    });
+    setError(null);
+    setRestored(false);
   }
 
   function stepQuantity(id: number, unit: ProductUnit, direction: 1 | -1, current: number) {
-    const next = Math.max(0, roundStep(current + direction * ADJUST_STEP[unit], unit));
-    setDraft(id, { text: formatQuantityInput(next, unit), removed: false });
+    setDraft(id, { text: formatQuantityInput(stepAdjustQuantity(current, unit, direction), unit), removed: false });
+  }
+
+  /** Sigue con lo que tocó el dueño, ahora sobre la versión nueva del pedido (el resto, como quedó guardado). */
+  function keepMine() {
+    setBase({ updatedAt: currentVersion, items: order.items });
+    setDrafts((current) => rebaseDrafts(current, base.items, order.items));
+    setError(null);
+    setRestored(false);
+  }
+
+  /** Descarta lo tipeado y arranca de lo que quedó guardado. */
+  function takeSaved() {
+    setBase({ updatedAt: currentVersion, items: order.items });
+    setDrafts(initialDrafts(order.items));
+    setError(null);
+    setRestored(false);
+  }
+
+  function handleCancel() {
+    clearAdjustDraft(order.id);
+    onCancel();
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) return;
-    if (hasProblems) {
-      setError('Revisá las cantidades marcadas.');
+    if (changed) {
+      setError({ message: 'El pedido cambió: elegí arriba con qué seguir antes de guardar.', version: currentVersion });
       return;
     }
-    if (allRemoved) {
-      setError('El pedido tiene que quedar con al menos un producto. Si no se lleva nada, cancelalo.');
+    if (totals.hasProblems) {
+      setError({ message: 'Revisá las cantidades marcadas.', version: currentVersion });
+      return;
+    }
+    if (totals.allRemoved) {
+      setError({ message: 'El pedido tiene que quedar con al menos un producto. Si no se lleva nada, cancelalo.', version: currentVersion });
       return;
     }
 
     setSaving(true);
-    setError('');
-    const message = await onSave(lines.map((line) => ({ id: line.item.id, quantity: line.removed ? 0 : line.quantity })));
+    setError(null);
+    const message = await onSave(adjustmentItems(lines), base.updatedAt);
+    if (message) {
+      setSaving(false);
+      setError({ message, version: currentVersion });
+      return;
+    }
+    // Guardado: el pedido se cierra (OrderCard) y el borrador ya no hace falta.
+    clearAdjustDraft(order.id);
+    setClosing(true);
     setSaving(false);
-    if (message) setError(message);
   }
 
   return (
     <form className="adm-adjust" onSubmit={handleSubmit} noValidate aria-label={`Ajustar pesos del pedido ${order.id}`}>
       <p className="adm-adjust__intro">
         {order.items.some((item) => isWeightUnit(item.unit))
-          ? 'Cargá lo que marcó la balanza. '
+          ? 'Cargá lo que marcó la balanza (se guarda de a 5 g). '
           : 'Cargá lo que realmente se lleva. '}
         Se cobra al precio del pedido, aunque después hayas cambiado el catálogo.
       </p>
 
+      {changed ? (
+        <InlineAlert kind="error">
+          <p className="adm-alert__title">El pedido cambió, revisalo.</p>
+          <p>
+            {restored ? 'Recuperamos los pesos que habías cargado, pero desde entonces ' : 'Mientras lo editabas, '}
+            el pedido se modificó desde otro lado (por ejemplo, otro celular cargó los pesos).
+            {changes.length ? ' Lo que quedó guardado:' : ' Los productos y las cantidades siguen iguales.'}
+          </p>
+          {changes.length ? (
+            <ul className="adm-alert__list">
+              {changes.map((change) => <li key={`${change.kind}-${change.id}`}>{describeItemChange(change)}</li>)}
+            </ul>
+          ) : null}
+          <p>
+            Abajo sigue lo que cargaste vos. &quot;Seguir con lo que cargué&quot; deja lo que tocaste y toma lo guardado en el resto;
+            &quot;Usar lo guardado&quot; descarta lo tuyo.
+          </p>
+          <div className="adm-alert__buttons">
+            <button type="button" className="adm-btn adm-btn--secondary adm-btn--small" onClick={keepMine}>
+              Seguir con lo que cargué
+            </button>
+            <button type="button" className="adm-btn adm-btn--ghost adm-btn--small" onClick={takeSaved}>
+              Usar lo guardado
+            </button>
+          </div>
+        </InlineAlert>
+      ) : restored ? (
+        <InlineAlert kind="info">
+          Recuperamos los pesos que habías cargado y todavía no se guardaron (por ejemplo, porque venció la sesión).
+          Revisalos y tocá &quot;Guardar pesos reales&quot;.
+        </InlineAlert>
+      ) : null}
+
       <ul className="adm-adjust__list">
         {lines.map(({ item, draft, problem, removed, quantity, rounded }) => {
           const inputId = `${baseId}-${item.id}`;
-          const current = parseQuantityInput(draft.text);
-          const base = current !== null && !Number.isNaN(current) ? current : item.quantity;
+          const current = parseQuantityInput(draft.text, item.unit);
+          const stepFrom = current !== null && !Number.isNaN(current) ? current : item.quantity;
+          const before = baseById.get(item.id);
+          const savedElsewhere = changed && (!before || Math.abs(before.quantity - item.quantity) > 1e-9);
           return (
             <li key={item.id} className={`adm-adjust__row${removed ? ' is-removed' : ''}${problem ? ' is-invalid' : ''}`}>
               <div className="adm-adjust__name">
                 <label htmlFor={inputId}><strong>{item.name}</strong></label>
                 <span className="adm-muted">
-                  {formatArs(item.price)} / {PRODUCT_UNIT_LABELS[item.unit]} · pidió {formatProductQuantity(item.quantity, item.unit)}
+                  {formatArs(item.price)} / {PRODUCT_UNIT_LABELS[item.unit]} · {quantityWord} {formatProductQuantity(item.quantity, item.unit)}
                 </span>
+                {savedElsewhere ? (
+                  <span className="adm-adjust__changed">
+                    Guardado ahora: {formatProductQuantity(item.quantity, item.unit)}
+                    {before ? ` (antes ${formatProductQuantity(before.quantity, before.unit)})` : ''}
+                  </span>
+                ) : null}
               </div>
 
               {draft.removed ? (
@@ -144,7 +238,7 @@ export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditor
                     <button
                       type="button"
                       className="adm-stepper__btn"
-                      onClick={() => stepQuantity(item.id, item.unit, -1, base)}
+                      onClick={() => stepQuantity(item.id, item.unit, -1, stepFrom)}
                       aria-label={`Restar ${formatProductQuantity(ADJUST_STEP[item.unit], item.unit)} de ${item.name}`}
                     >
                       <Minus size={16} aria-hidden="true" />
@@ -164,7 +258,7 @@ export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditor
                     <button
                       type="button"
                       className="adm-stepper__btn"
-                      onClick={() => stepQuantity(item.id, item.unit, 1, base)}
+                      onClick={() => stepQuantity(item.id, item.unit, 1, stepFrom)}
                       aria-label={`Sumar ${formatProductQuantity(ADJUST_STEP[item.unit], item.unit)} de ${item.name}`}
                     >
                       <Plus size={16} aria-hidden="true" />
@@ -200,23 +294,23 @@ export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditor
       </ul>
 
       <dl className="adm-totals adm-totals--adjust">
-        <div><dt>Subtotal</dt><dd className="adm-money">{formatArs(subtotal)} <span className="adm-muted">(antes {formatArs(order.subtotal)})</span></dd></div>
+        <div><dt>Subtotal</dt><dd className="adm-money">{formatArs(totals.subtotal)} <span className="adm-muted">(antes {formatArs(order.subtotal)})</span></dd></div>
         {isDelivery ? (
           <div>
             <dt>Envío</dt>
             <dd className="adm-money">{order.shippingCost > 0 ? formatArs(order.shippingCost) : 'Gratis'} <span className="adm-muted">(no cambia)</span></dd>
           </div>
         ) : null}
-        <div className="adm-totals__total"><dt>Total final</dt><dd className="adm-money">{formatArs(total)}</dd></div>
+        <div className="adm-totals__total"><dt>Total final</dt><dd className="adm-money">{formatArs(totals.total)}</dd></div>
       </dl>
 
-      {error ? <InlineAlert>{error}</InlineAlert> : null}
+      {visibleError ? <InlineAlert>{visibleError}</InlineAlert> : null}
 
       <div className="adm-form-actions">
-        <button type="submit" className="adm-btn adm-btn--primary" disabled={saving}>
+        <button type="submit" className="adm-btn adm-btn--primary" disabled={saving || changed}>
           {saving ? <Spinner /> : <Save size={18} aria-hidden="true" />} Guardar pesos reales
         </button>
-        <button type="button" className="adm-btn adm-btn--secondary" onClick={onCancel} disabled={saving}>
+        <button type="button" className="adm-btn adm-btn--secondary" onClick={handleCancel} disabled={saving}>
           Cancelar
         </button>
       </div>

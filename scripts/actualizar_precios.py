@@ -1813,10 +1813,17 @@ class ClienteApi:
             descripcion=descripcion, reintentar_429=False,
         )
         if respuesta.status_code == 200:
-            if not any(cookie.name == COOKIE_SESION for cookie in self.sesion.cookies):
+            cookies = [cookie for cookie in self.sesion.cookies if cookie.name == COOKIE_SESION]
+            if not cookies:
                 raise ErrorLogin(
                     'El login respondió bien pero no llegó la cookie de sesión. Si usás http://, probá con https://.'
                 )
+            if partes.scheme == 'http':
+                # La cookie viene con Secure, y requests no la devuelve por http://
+                # (el navegador sí, porque trata a localhost como seguro). Solo
+                # pasa con los hosts locales: a otro host por http no se llega.
+                for cookie in cookies:
+                    cookie.secure = False
             log.info('Sesión iniciada en %s.', self.base_url)
             return
         if respuesta.status_code == 401:

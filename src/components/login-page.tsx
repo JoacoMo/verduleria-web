@@ -8,10 +8,16 @@ import { ADMIN_API, ADMIN_ROUTES } from '@/lib/routes';
 import { InlineAlert } from './admin/notices';
 import { Spinner } from './admin/fields';
 import { NETWORK_ERROR_MESSAGE, errorFromBody, retryAfterSeconds } from './admin/api';
+import { hasAdjustDrafts } from './admin/adjust-drafts';
 
 type LoginPageProps = {
   /** Nombre del local (lo pasa la página desde siteConfig). */
   storeName?: string;
+  /**
+   * Se llegó acá porque la sesión venció con el panel abierto
+   * (/trastienda?motivo=sesion): se avisa en vez de mostrar el login como si nada.
+   */
+  sessionExpired?: boolean;
 };
 
 /** Mensaje del 429 con los minutos que faltan, si el servidor los mandó. */
@@ -30,14 +36,22 @@ function tooManyAttemptsMessage(response: Response, body: unknown) {
  * El login responde con una cookie httpOnly: este componente nunca ve el token
  * y no guarda nada en el navegador. Si ya hay una sesión vigente, se pasa
  * directo al panel.
+ *
+ * Si se llegó porque la sesión venció con el panel abierto, lo dice ("Tu sesión
+ * venció, ingresá de nuevo") y, si quedaron pesos tipeados sin guardar en esta
+ * pestaña, avisa que se recuperan al entrar (admin/adjust-drafts.ts).
  */
-export default function LoginPage({ storeName = 'El Pampa' }: LoginPageProps) {
+export default function LoginPage({ storeName = 'El Pampa', sessionExpired = false }: LoginPageProps) {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showExpired, setShowExpired] = useState(sessionExpired);
+  // Pesos tipeados en el panel que quedaron sin guardar en esta pestaña. Se lee
+  // después de montar: en el servidor no hay sessionStorage.
+  const [hasPendingWeights, setHasPendingWeights] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -47,6 +61,7 @@ export default function LoginPage({ storeName = 'El Pampa' }: LoginPageProps) {
     } catch {
       // Almacenamiento bloqueado: no hay nada que limpiar.
     }
+    setHasPendingWeights(hasAdjustDrafts());
 
     let cancelled = false;
     fetch(`${ADMIN_API}/session`, { cache: 'no-store', credentials: 'same-origin' })
@@ -61,10 +76,22 @@ export default function LoginPage({ storeName = 'El Pampa' }: LoginPageProps) {
     };
   }, [router]);
 
+  useEffect(() => {
+    if (!sessionExpired) return;
+    // El aviso ya se mostró: se saca ?motivo=sesion de la dirección para que
+    // recargar o volver a esta página más tarde no lo repita.
+    try {
+      window.history.replaceState(null, '', ADMIN_ROUTES.login);
+    } catch {
+      // Sin History API: queda el parámetro, no pasa nada.
+    }
+  }, [sessionExpired]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
     setError('');
+    setShowExpired(false);
 
     if (!username.trim() || !password) {
       setError('Completá el usuario y la contraseña.');
@@ -113,6 +140,17 @@ export default function LoginPage({ storeName = 'El Pampa' }: LoginPageProps) {
       <div className="adm-login__card">
         <p className="adm-brand adm-login__brand">{storeName}</p>
         <h1 className="adm-login__title"><Lock size={20} aria-hidden="true" /> Ingreso al panel</h1>
+
+        {showExpired ? (
+          <InlineAlert kind="info">
+            Tu sesión venció, ingresá de nuevo.
+            {hasPendingWeights ? ' Los pesos que estabas cargando no se perdieron: los vas a ver al entrar, para revisarlos y guardarlos.' : ''}
+          </InlineAlert>
+        ) : hasPendingWeights ? (
+          <InlineAlert kind="info">
+            Hay pesos que cargaste y no se guardaron: los vas a ver al entrar.
+          </InlineAlert>
+        ) : null}
 
         <form onSubmit={handleSubmit} noValidate>
           <div className="adm-field">

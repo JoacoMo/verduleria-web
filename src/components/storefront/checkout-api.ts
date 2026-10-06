@@ -93,6 +93,8 @@ function toCheckoutResponse(data: unknown, request: CheckoutRequest): CheckoutRe
     priceDrops: Array.isArray(value.priceDrops)
       ? value.priceDrops.filter(isPriceChange).filter((change) => change.currentPrice < change.previousPrice)
       : [],
+    // Hora del servidor en que se creó el pedido; vacía si una respuesta vieja no la trae.
+    createdAt: typeof value.createdAt === 'string' && !Number.isNaN(Date.parse(value.createdAt)) ? value.createdAt : '',
   };
 }
 

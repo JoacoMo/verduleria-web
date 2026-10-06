@@ -25,7 +25,7 @@ export default function Hero({ storeInfo, heading, cartCount, onOpenCart, onCart
   const defaultTagline = `Frutas y verduras frescas por kilo, gramo o unidad, y bolsones armados. Retirá en el local o recibilo en tu casa de ${DELIVERY_WINDOWS_TEXT}.`;
 
   return (
-    <header>
+    <header className="site-hero">
       <div className="container">
         <div className="hero-text">
           {heading ? (

@@ -5,10 +5,36 @@
  * en tarjetas de ~300 px, así que 800 px de ancho alcanzan incluso en pantallas
  * de alta densidad, y en WebP pesa unas decenas de KB: carga rápido con datos
  * móviles y ahorra almacenamiento en Supabase.
+ *
+ * El alto también tiene tope: con solo el ancho, una captura de pantalla larga
+ * o una panorámica vertical quedaba de 800 × 10.000 px y podía pasar el límite
+ * de 4,5 MB de Vercel (que corta con un 413 propio, sin llegar al servidor).
  */
 export const MAX_IMAGE_WIDTH = 800;
+export const MAX_IMAGE_HEIGHT = 1600;
+/**
+ * Lo más que acepta el servidor (MAX_UPLOAD_BYTES en
+ * src/app/api/gestion/upload-product-image/route.ts): por debajo del corte de
+ * 4,5 MB de Vercel. Si la foto comprimida igual lo pasa, no se intenta subir.
+ */
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const WEBP_QUALITY = 0.82;
 const JPEG_QUALITY = 0.85;
+
+/**
+ * Medidas de la imagen achicada para que entre en maxWidth × maxHeight sin
+ * deformarse. Nunca se agranda una foto chica. Una medida desconocida (0) se
+ * toma como el tope.
+ */
+export function fitWithin(width: number, height: number, maxWidth = MAX_IMAGE_WIDTH, maxHeight = MAX_IMAGE_HEIGHT) {
+  const sourceWidth = width > 0 ? width : maxWidth;
+  const sourceHeight = height > 0 ? height : maxHeight;
+  const scale = Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
 
 export type CompressedImage = {
   file: File;
@@ -42,9 +68,7 @@ export async function compressImageFile(file: File): Promise<CompressedImage> {
   }
 
   const image = await loadImage(file);
-  const scale = Math.min(1, MAX_IMAGE_WIDTH / (image.naturalWidth || MAX_IMAGE_WIDTH));
-  const width = Math.max(1, Math.round(image.naturalWidth * scale));
-  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const { width, height } = fitWithin(image.naturalWidth, image.naturalHeight);
 
   const canvas = document.createElement('canvas');
   canvas.width = width;

@@ -555,7 +555,22 @@
 
 .adm-alert__icon { flex-shrink: 0; margin-top: 2px; }
 .adm-alert__body { flex: 1; min-width: 0; }
+.adm-alert__body > p { margin: 0 0 6px; }
+.adm-alert__body > p:last-child { margin-bottom: 0; }
 .adm-alert__action { flex-shrink: 0; }
+.adm-alert__title { font-weight: 700; }
+
+.adm-alert__list {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+.adm-alert__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 .adm-alert--error {
   background: #FBEAE6;
@@ -672,6 +687,8 @@
 .adm-badge--bolson { background: #E4F1E5; color: var(--leaf-dark, #2C4D30); }
 .adm-badge--category { background: var(--paper-dark, #F0E9D8); color: #5F5A50; font-weight: 600; }
 .adm-badge--stock { background: var(--chalkboard, #1E2E22); color: var(--chalk, #F5F1E6); }
+/* "Se arma mañana": retiro que entró después del corte del día. */
+.adm-badge--next-day { background: #FCE9C8; color: #6B4313; vertical-align: 1px; }
 
 .adm-count {
   display: inline-flex;
@@ -975,6 +992,16 @@
 
 .adm-group__title svg { color: var(--crate-dark, #A66C2B); flex-shrink: 0; }
 
+/* Retiros que vienen del día anterior: son los primeros que hay que tener listos. */
+.adm-group--pickup-carry > .adm-group__title { border-bottom-color: var(--radish, #C1432E); }
+.adm-group--pickup-carry > .adm-group__title svg { color: var(--radish, #C1432E); }
+
+.adm-group__hint {
+  margin: -4px 0 10px;
+  font-size: 0.88rem;
+  color: var(--adm-muted);
+}
+
 .adm-group--cancelled > .adm-group__title {
   cursor: pointer;
   color: var(--adm-muted);
@@ -999,6 +1026,53 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Pendientes de días anteriores: plegable, arriba de los pedidos del día. */
+
+.adm-overdue {
+  margin: 0 0 22px;
+  padding: 0 12px;
+  background: #FFF8E6;
+  border: 1px solid rgba(201, 138, 62, 0.55);
+  border-left: 5px solid var(--radish, #C1432E);
+  border-radius: var(--adm-radius);
+}
+
+.adm-overdue[open] { padding-bottom: 12px; }
+
+.adm-overdue__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 48px;
+  padding: 8px 0;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+  color: var(--chalkboard, #1E2E22);
+}
+
+.adm-overdue__summary::-webkit-details-marker { display: none; }
+.adm-overdue__summary > svg:first-child { color: var(--radish, #C1432E); flex-shrink: 0; }
+.adm-overdue[open] .adm-group__chevron { transform: rotate(180deg); }
+
+.adm-overdue__meta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--adm-error-text);
+}
+
+.adm-overdue__lead {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  color: var(--adm-muted);
+}
+
+.adm-overdue__more {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
 }
 
 .adm-order {
@@ -1149,6 +1223,12 @@
   color: var(--adm-muted);
 }
 
+/* Explica por qué "Avisar total final" está deshabilitado. */
+.adm-order__note--warn {
+  color: #6B4313;
+  font-weight: 600;
+}
+
 .adm-order__actions {
   display: flex;
   flex-wrap: wrap;
@@ -1197,6 +1277,13 @@
 }
 
 .adm-adjust__name .adm-muted { font-size: 0.8rem; }
+
+/* Cantidad que guardó otro dispositivo mientras el editor estaba abierto. */
+.adm-adjust__changed {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--adm-error-text);
+}
 
 .adm-adjust__row.is-removed .adm-adjust__name strong {
   text-decoration: line-through;
@@ -1379,5 +1466,6 @@
   .adm-shell { padding: 0; max-width: none; }
   .adm-order,
   .adm-stat { break-inside: avoid; box-shadow: none; }
-  .adm-group--cancelled { display: none; }
+  .adm-group--cancelled,
+  .adm-overdue { display: none; }
 }

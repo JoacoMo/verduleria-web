@@ -78,8 +78,10 @@ button, input, textarea, select {
 }
 
 /* ================= Cabecera (pizarrón) ================= */
+/* Con clase y no con "header" suelto: el selector de elemento pintaba también
+   los <header> del panel (la barra de arriba y el encabezado de cada pedido). */
 
-header {
+.site-hero {
   background-color: var(--chalkboard);
   color: var(--chalk);
   padding: 3rem 0 4.5rem;
@@ -88,7 +90,7 @@ header {
   background-size: 14px 14px;
 }
 
-header .container {
+.site-hero .container {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -2490,13 +2492,13 @@ button {
 /* ================= Celulares ================= */
 
 @media (max-width: 700px) {
-  header { padding: 2.2rem 0 4rem; }
+  .site-hero { padding: 2.2rem 0 4rem; }
   .hero-brand { font-size: 2.9rem; }
   .hero-brand svg { width: 34px; height: 34px; }
   .hero-brand-small { font-size: 1.7rem; }
   .hero-heading { font-size: 2.5rem; }
   .hero-title-sub { font-size: 1.05rem; }
-  header .container { flex-direction: column; gap: 16px; }
+  .site-hero .container { flex-direction: column; gap: 16px; }
   main h2 { font-size: 2.2rem; margin-top: 40px; }
   .panel-shell { padding: 18px; }
   .product-item,

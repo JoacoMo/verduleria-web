@@ -1,15 +1,36 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Ban, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Store, Truck, type LucideIcon } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import {
+  Ban,
+  CalendarClock,
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  History,
+  RefreshCw,
+  Store,
+  Truck,
+  type LucideIcon,
+} from 'lucide-react';
 import type { OrderRecord, StoreInfo } from '@/lib/types';
 import { formatArs } from '@/lib/format-price';
 import { MAX_ORDERS_PER_DAY } from '@/lib/order-options';
 import { InlineAlert } from './notices';
 import { Spinner } from './fields';
-import { OrderCard } from './order-card';
-import type { AdjustedItem } from './order-adjust-editor';
-import { groupOrdersByDelivery, hasWeightItems, isOpenOrder, summarizeDay, type OrderGroupKind } from './orders-model';
+import { OrderCard, type AdjustOrderHandler } from './order-card';
+import {
+  groupOrdersByDelivery,
+  isAwaitingWeights,
+  isOpenOrder,
+  summarizeDay,
+  summarizeOverdue,
+  visibleOverdueOrders,
+  type OrderGroupKind,
+  type OverdueSummary,
+} from './orders-model';
+import { readAdjustDraft } from './adjust-drafts';
 import { describeDate, describeDateRelative, formatTime, shiftDate } from './format';
 
 /**
@@ -19,11 +40,16 @@ import { describeDate, describeDateRelative, formatTime, shiftDate } from './for
  */
 const MAX_DAYS_AHEAD = 7;
 
+/** Tope de "Pendientes de días anteriores": el mismo MAX_OVERDUE_ORDERS de la API (order-lifecycle.ts). */
+const MAX_OVERDUE_SHOWN = 100;
+
 type View = 'reparto' | 'llegada';
+type LoadStatus = 'loading' | 'ready' | 'error';
 
 const GROUP_ICONS: Record<OrderGroupKind, LucideIcon> = {
   slot: Truck,
   'no-slot': Truck,
+  'pickup-carry': CalendarClock,
   pickup: Store,
   'other-day': CalendarDays,
   cancelled: Ban,
@@ -35,8 +61,12 @@ function plural(count: number, singular: string, pluralForm: string) {
 
 type OrdersSectionProps = {
   orders: OrderRecord[];
-  status: 'loading' | 'ready' | 'error';
+  status: LoadStatus;
   error: string;
+  /** Pendientes de días anteriores (GET /api/gestion/orders/atrasados), del más viejo al más nuevo. */
+  overdue: OrderRecord[];
+  overdueStatus: LoadStatus;
+  overdueError: string;
   selectedDate: string;
   today: string;
   refreshing: boolean;
@@ -48,13 +78,16 @@ type OrdersSectionProps = {
   onConfirm: (order: OrderRecord) => void;
   onCancel: (order: OrderRecord) => void;
   onDelete: (order: OrderRecord) => void;
-  onAdjust: (order: OrderRecord, items: AdjustedItem[]) => Promise<string | null>;
+  onAdjust: AdjustOrderHandler;
 };
 
 export function OrdersSection({
   orders,
   status,
   error,
+  overdue,
+  overdueStatus,
+  overdueError,
   selectedDate,
   today,
   refreshing,
@@ -77,23 +110,55 @@ export function OrdersSection({
     () => [...orders].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || b.id - a.id),
     [orders],
   );
-  const hasEstimatedDue = orders.some((order) => isOpenOrder(order) && !order.adjustedAt && hasWeightItems(order));
+  const hasEstimatedDue = orders.some((order) => isOpenOrder(order) && isAwaitingWeights(order));
+
+  // "Días anteriores" es respecto de hoy: el bloque va solo en la vista de hoy.
+  const isToday = selectedDate === today;
+  const overdueShown = useMemo(() => (isToday ? visibleOverdueOrders(overdue, orders) : []), [isToday, overdue, orders]);
+  const overdueSummary = useMemo(() => summarizeOverdue(overdueShown), [overdueShown]);
 
   const relative = describeDateRelative(selectedDate, today);
   const dayLabel = ['Hoy', 'Ayer', 'Mañana'].includes(relative) ? `${relative}, ${describeDate(selectedDate)}` : relative;
 
-  function renderCard(order: OrderRecord) {
+  function renderCard(order: OrderRecord, cardDate = selectedDate) {
     return (
       <OrderCard
         key={order.id}
         order={order}
-        selectedDate={selectedDate}
+        selectedDate={cardDate}
         storeInfo={storeInfo}
         busy={busyOrderIds.has(order.id)}
         onConfirm={onConfirm}
         onCancel={onCancel}
         onDelete={onDelete}
         onAdjust={onAdjust}
+      />
+    );
+  }
+
+  function renderOverdue() {
+    if (!isToday) return null;
+    if (overdueStatus === 'error' && overdueShown.length === 0) {
+      return (
+        <InlineAlert
+          action={(
+            <button type="button" className="adm-btn adm-btn--secondary adm-btn--small" onClick={onRefresh}>
+              <RefreshCw size={16} aria-hidden="true" /> Reintentar
+            </button>
+          )}
+        >
+          {overdueError}
+        </InlineAlert>
+      );
+    }
+    if (overdueShown.length === 0) return null;
+    return (
+      <OverdueBlock
+        orders={overdueShown}
+        summary={overdueSummary}
+        error={overdueStatus === 'error' ? overdueError : ''}
+        truncated={overdue.length >= MAX_OVERDUE_SHOWN}
+        renderCard={(order) => renderCard(order, today)}
       />
     );
   }
@@ -160,6 +225,8 @@ export function OrdersSection({
         </p>
       ) : null}
 
+      {renderOverdue()}
+
       {status === 'error' ? (
         <InlineAlert
           action={(
@@ -218,6 +285,9 @@ export function OrdersSection({
                   </li>
                 ))}
                 <li><Store size={14} aria-hidden="true" /> Retiros: <strong>{summary.pickupCount}</strong></li>
+                {summary.nextDayPickupCount ? (
+                  <li><CalendarClock size={14} aria-hidden="true" /> Retiros que se arman mañana: <strong>{summary.nextDayPickupCount}</strong></li>
+                ) : null}
                 {summary.otherDeliveries ? (
                   <li><CalendarDays size={14} aria-hidden="true" /> Envíos sin turno u otro día: <strong>{summary.otherDeliveries}</strong></li>
                 ) : null}
@@ -235,7 +305,7 @@ export function OrdersSection({
           </div>
 
           {view === 'llegada' ? (
-            <div className="adm-group__list">{byArrival.map(renderCard)}</div>
+            <div className="adm-group__list">{byArrival.map((order) => renderCard(order))}</div>
           ) : (
             groups.map((group) => {
               const Icon = GROUP_ICONS[group.kind];
@@ -253,14 +323,15 @@ export function OrdersSection({
                       {title}
                       <ChevronDown size={18} aria-hidden="true" className="adm-group__chevron" />
                     </summary>
-                    <div className="adm-group__list">{group.orders.map(renderCard)}</div>
+                    <div className="adm-group__list">{group.orders.map((order) => renderCard(order))}</div>
                   </details>
                 );
               }
               return (
                 <section key={group.key} className={`adm-group adm-group--${group.kind}`}>
                   <h3 className="adm-group__title">{title}</h3>
-                  <div className="adm-group__list">{group.orders.map(renderCard)}</div>
+                  {group.hint ? <p className="adm-group__hint">{group.hint}</p> : null}
+                  <div className="adm-group__list">{group.orders.map((order) => renderCard(order))}</div>
                 </section>
               );
             })
@@ -268,5 +339,48 @@ export function OrdersSection({
         </>
       )}
     </section>
+  );
+}
+
+type OverdueBlockProps = {
+  orders: OrderRecord[];
+  summary: OverdueSummary;
+  error: string;
+  /** La API corta en MAX_OVERDUE_SHOWN: puede haber más. */
+  truncated: boolean;
+  renderCard: (order: OrderRecord) => ReactNode;
+};
+
+/**
+ * "Pendientes de días anteriores": plegado, para no empujar hacia abajo los
+ * pedidos del día. Se abre solo si alguno tiene pesos tipeados sin guardar
+ * (la sesión venció con el editor abierto): si no, el editor recuperado
+ * quedaría escondido.
+ */
+function OverdueBlock({ orders, summary, error, truncated, renderCard }: OverdueBlockProps) {
+  const [startOpen] = useState(() => orders.some((order) => readAdjustDraft(order.id) !== null));
+  return (
+    <details className="adm-overdue" open={startOpen || undefined}>
+      <summary className="adm-overdue__summary">
+        <History size={18} aria-hidden="true" />
+        <span className="adm-overdue__title">Pendientes de días anteriores</span>
+        <span className="adm-count">{summary.count}</span>
+        <span className="adm-overdue__meta adm-money">
+          {formatArs(summary.toCollectTotal)} por cobrar{summary.hasEstimated ? ' (con estimados)' : ''}
+        </span>
+        <ChevronDown size={18} aria-hidden="true" className="adm-group__chevron" />
+      </summary>
+      <p className="adm-overdue__lead">
+        Pedidos de otros días que siguen sin cobrar. Si ya los entregaste y cobraste, tocá &quot;Confirmar pago&quot;;
+        si no se van a entregar, cancelalos. Del más viejo al más nuevo.
+      </p>
+      {error ? <InlineAlert>{error}</InlineAlert> : null}
+      <div className="adm-group__list">{orders.map(renderCard)}</div>
+      {truncated ? (
+        <p className="adm-muted adm-overdue__more">
+          Se muestran los {MAX_OVERDUE_SHOWN} más viejos: a medida que los resuelvas aparecen los que siguen.
+        </p>
+      ) : null}
+    </details>
   );
 }

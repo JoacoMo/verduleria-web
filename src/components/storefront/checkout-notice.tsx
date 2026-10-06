@@ -60,7 +60,9 @@ export default function CheckoutNoticeBox({ notice }: { notice: CheckoutNotice }
             </li>
           ))}
         </ul>
-        <p>Ya actualizamos el total. Revisalo y tocá «Confirmar pedido» de nuevo.</p>
+        {/* Neutro a propósito: si con los precios nuevos el envío dejó de llegar
+            al mínimo, el resumen ya lo marca y no hay que mandarlo a confirmar. */}
+        <p>No registramos nada todavía: ya actualizamos el total, revisalo antes de confirmar.</p>
       </div>
     );
   }

@@ -1,8 +1,9 @@
 import type { OrderRecord } from '@/lib/types';
 import { DELIVERY_WINDOWS } from '@/lib/delivery-slots';
-import { formatMinutes } from '@/lib/store-hours';
+import { formatMinutes, getArgentinaParts, pickupCutoffMinutes } from '@/lib/store-hours';
 import { isWeightUnit, lineWeightKg } from '@/lib/product-units';
 import { roundMoney } from '@/lib/pricing';
+import { toArgentinaDate } from './format';
 
 /**
  * Lógica pura de la lista de pedidos del panel: cómo se agrupan para armar el
@@ -19,6 +20,15 @@ export function hasWeightItems(order: Pick<OrderRecord, 'items'>) {
 }
 
 /**
+ * Tiene productos por peso y todavía no se cargaron los pesos reales: el total
+ * es una estimación (lo que pidió el cliente, no lo que marcó la balanza). Con
+ * esto no se puede avisar el "total final" ni dar por bueno el cobro sin aviso.
+ */
+export function isAwaitingWeights(order: Pick<OrderRecord, 'items' | 'adjustedAt'>) {
+  return !order.adjustedAt && hasWeightItems(order);
+}
+
+/**
  * Cómo se llama el total de un pedido:
  * - "Total final" si el dueño ya cargó los pesos reales.
  * - "Total estimado" si tiene cosas por peso y todavía no se pesó.
@@ -26,7 +36,50 @@ export function hasWeightItems(order: Pick<OrderRecord, 'items'>) {
  */
 export function totalLabel(order: Pick<OrderRecord, 'items' | 'adjustedAt'>) {
   if (order.adjustedAt) return 'Total final';
-  return hasWeightItems(order) ? 'Total estimado' : 'Total';
+  return isAwaitingWeights(order) ? 'Total estimado' : 'Total';
+}
+
+function isPickup(order: Pick<OrderRecord, 'deliveryMethod'>) {
+  return order.deliveryMethod !== 'delivery';
+}
+
+/** "YYYY-MM-DD" (hora argentina) en que entró el pedido, o null si no se sabe. */
+function createdDateOf(order: Pick<OrderRecord, 'createdAt'>) {
+  if (!order.createdAt) return null;
+  const created = new Date(order.createdAt);
+  return Number.isNaN(created.getTime()) ? null : toArgentinaDate(created);
+}
+
+/**
+ * Retiro que entró después del corte de su día (19:00, o el cierre del local si
+ * es antes: el domingo, 14:00). No se arma ese día sino el siguiente, que es lo
+ * que la tienda le promete al cliente (describePickupReady en store-hours.ts).
+ */
+export function isAfterPickupCutoff(order: Pick<OrderRecord, 'deliveryMethod' | 'createdAt'>) {
+  if (!isPickup(order) || !order.createdAt) return false;
+  const created = new Date(order.createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  const { dayIndex, minutesOfDay } = getArgentinaParts(created);
+  return minutesOfDay >= pickupCutoffMinutes(dayIndex);
+}
+
+/**
+ * Mirando el día en que entró: un retiro que se arma recién al día siguiente
+ * ("Se arma mañana"). El día siguiente ese mismo pedido aparece en su propio
+ * grupo (ver groupOrdersByDelivery) y ahí ya no lleva la marca.
+ */
+export function isPickupForNextDay(order: Pick<OrderRecord, 'deliveryMethod' | 'createdAt'>, date: string) {
+  return isAfterPickupCutoff(order) && createdDateOf(order) === date;
+}
+
+/**
+ * Retiro que entró un día anterior al que se está mirando: el servidor lo trae
+ * porque entró después del corte de ayer y se arma hoy.
+ */
+export function isCarriedPickup(order: Pick<OrderRecord, 'deliveryMethod' | 'createdAt'>, date: string) {
+  if (!isPickup(order)) return false;
+  const created = createdDateOf(order);
+  return created !== null && created < date;
 }
 
 /** Peso aproximado del pedido en kilos (solo cuenta lo que va por peso). */
@@ -53,12 +106,14 @@ export function windowText(start: number, end: number) {
   return `de ${short(start)} a ${short(end)} h`;
 }
 
-export type OrderGroupKind = 'slot' | 'no-slot' | 'pickup' | 'other-day' | 'cancelled';
+export type OrderGroupKind = 'slot' | 'no-slot' | 'pickup-carry' | 'pickup' | 'other-day' | 'cancelled';
 
 export type OrderGroup = {
   key: string;
   kind: OrderGroupKind;
   title: string;
+  /** Aclaración corta debajo del título (qué hay que hacer con ese grupo), si hace falta. */
+  hint?: string;
   orders: OrderRecord[];
 };
 
@@ -69,8 +124,10 @@ function byCreatedAtAsc(a: OrderRecord, b: OrderRecord) {
 /**
  * Agrupa los pedidos de un día como se arma el reparto: primero cada turno de
  * envío del día (en orden horario), después los envíos sin turno (pedidos
- * viejos), los retiros, los envíos que se entregan otro día (entraron hoy para
- * mañana, por ejemplo) y al final los cancelados, que no hay que armar.
+ * viejos), los retiros que entraron ayer después del corte (se arman hoy y son
+ * los primeros que hay que tener listos), el resto de los retiros, los envíos
+ * que se entregan otro día (entraron hoy para mañana, por ejemplo) y al final
+ * los cancelados, que no hay que armar.
  *
  * Dentro de cada grupo, por orden de llegada: el que pidió primero se arma primero.
  * Los grupos vacíos no se devuelven.
@@ -78,6 +135,7 @@ function byCreatedAtAsc(a: OrderRecord, b: OrderRecord) {
 export function groupOrdersByDelivery(orders: OrderRecord[], date: string): OrderGroup[] {
   const bySlot = new Map<number, { slot: ParsedSlot; orders: OrderRecord[] }>();
   const noSlot: OrderRecord[] = [];
+  const carriedPickup: OrderRecord[] = [];
   const pickup: OrderRecord[] = [];
   const otherDay: OrderRecord[] = [];
   const cancelled: OrderRecord[] = [];
@@ -87,8 +145,8 @@ export function groupOrdersByDelivery(orders: OrderRecord[], date: string): Orde
       cancelled.push(order);
       continue;
     }
-    if (order.deliveryMethod !== 'delivery') {
-      pickup.push(order);
+    if (isPickup(order)) {
+      (isCarriedPickup(order, date) ? carriedPickup : pickup).push(order);
       continue;
     }
     const slot = parseSlot(order.deliverySlot);
@@ -113,6 +171,15 @@ export function groupOrdersByDelivery(orders: OrderRecord[], date: string): Orde
     }));
 
   if (noSlot.length) groups.push({ key: 'no-slot', kind: 'no-slot', title: 'Envíos sin turno', orders: noSlot.sort(byCreatedAtAsc) });
+  if (carriedPickup.length) {
+    groups.push({
+      key: 'pickup-carry',
+      kind: 'pickup-carry',
+      title: 'Retiros que entraron ayer después del horario',
+      hint: 'Se arman hoy: el cliente los viene a buscar desde que abre el local.',
+      orders: carriedPickup.sort(byCreatedAtAsc),
+    });
+  }
   if (pickup.length) groups.push({ key: 'pickup', kind: 'pickup', title: 'Retiros en el local', orders: pickup.sort(byCreatedAtAsc) });
   if (otherDay.length) {
     groups.push({
@@ -136,7 +203,10 @@ export type DaySummary = {
   /** Pendientes y con problema: lo que falta cobrar. */
   toCollectCount: number;
   toCollectTotal: number;
+  /** Retiros que hay que tener listos ese día (incluye los que entraron ayer después del corte). */
   pickupCount: number;
+  /** Retiros que entraron ese día después del corte: se arman al día siguiente. */
+  nextDayPickupCount: number;
   /** Envíos de cada turno del día, en orden horario (incluye turnos con 0). */
   deliveriesBySlot: Array<{ key: string; label: string; count: number }>;
   /** Envíos sin turno o para otro día. */
@@ -153,6 +223,7 @@ export function summarizeDay(orders: OrderRecord[], date: string): DaySummary {
     toCollectCount: 0,
     toCollectTotal: 0,
     pickupCount: 0,
+    nextDayPickupCount: 0,
     deliveriesBySlot: DELIVERY_WINDOWS.map(({ start, end }) => ({ key: `slot-${start}`, label: windowText(start, end), count: 0 })),
     otherDeliveries: 0,
   };
@@ -172,8 +243,9 @@ export function summarizeDay(orders: OrderRecord[], date: string): DaySummary {
       summary.toCollectTotal = roundMoney(summary.toCollectTotal + order.total);
     }
 
-    if (order.deliveryMethod !== 'delivery') {
-      summary.pickupCount += 1;
+    if (isPickup(order)) {
+      if (isPickupForNextDay(order, date)) summary.nextDayPickupCount += 1;
+      else summary.pickupCount += 1;
       continue;
     }
     const slot = parseSlot(order.deliverySlot);
@@ -183,4 +255,31 @@ export function summarizeDay(orders: OrderRecord[], date: string): DaySummary {
   }
 
   return summary;
+}
+
+export type OverdueSummary = {
+  count: number;
+  /** Lo que falta cobrar de esos pedidos (con totales estimados si no se pesaron). */
+  toCollectTotal: number;
+  hasEstimated: boolean;
+};
+
+/**
+ * Pendientes de días anteriores que no están ya en la lista del día que se está
+ * mirando (para no mostrar dos tarjetas del mismo pedido) y su resumen.
+ */
+export function visibleOverdueOrders(overdue: OrderRecord[], dayOrders: OrderRecord[]) {
+  const shown = new Set(dayOrders.map((order) => order.id));
+  return overdue.filter((order) => isOpenOrder(order) && !shown.has(order.id));
+}
+
+export function summarizeOverdue(orders: OrderRecord[]): OverdueSummary {
+  return orders.reduce<OverdueSummary>(
+    (summary, order) => ({
+      count: summary.count + 1,
+      toCollectTotal: roundMoney(summary.toCollectTotal + order.total),
+      hasEstimated: summary.hasEstimated || isAwaitingWeights(order),
+    }),
+    { count: 0, toCollectTotal: 0, hasEstimated: false },
+  );
 }

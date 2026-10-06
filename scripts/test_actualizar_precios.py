@@ -190,7 +190,8 @@ class ServidorFalso:
 
         if metodo == 'POST' and ruta == '/api/gestion/login':
             if cuerpo == {'username': self.USUARIO, 'password': self.PASSWORD}:
-                cookie = f'{ap.COOKIE_SESION}={self.TOKEN}; Path=/api/gestion; HttpOnly; SameSite=Strict; Max-Age=43200'
+                # Igual que la real (src/lib/auth.ts): con Secure aunque esto sea http://.
+                cookie = f'{ap.COOKIE_SESION}={self.TOKEN}; Path=/api/gestion; HttpOnly; Secure; SameSite=Strict; Max-Age=43200'
                 return self._responder(handler, 200, {'ok': True}, {'Set-Cookie': cookie})
             return self._responder(handler, 401, {'error': 'Usuario o contraseña incorrectos.'})
 

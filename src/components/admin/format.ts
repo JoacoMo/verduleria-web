@@ -85,24 +85,44 @@ export function parseMoneyInput(raw: string): number | null {
   return Number(normalized);
 }
 
+/** "1.500" / "1,500": grupos de miles, sin decimales. */
+const QUANTITY_THOUSANDS_ONLY = /^\d{1,3}([.,]\d{3})+$/;
+/** "1.500,5": miles con punto y coma decimal. */
+const QUANTITY_THOUSANDS_WITH_DECIMALS = /^\d{1,3}(\.\d{3})+,\d+$/;
+
 /**
- * Cantidad tipeada (kilos, gramos, unidades). Acá el punto y la coma son
- * siempre decimales: "1.250" en la balanza es un kilo y cuarto.
+ * Cantidad tipeada, en la unidad del ítem.
+ *
+ * - En kilos el punto y la coma son decimales: "1.250" en la balanza es un kilo
+ *   y cuarto.
+ * - En gramos y en unidades no hay decimales que tengan sentido, así que "1.500"
+ *   o "1,500" son mil quinientos (si no, 1500 g quedaban en 1,5 g).
+ * - "1.500,5" se lee como 1500,5 en cualquier unidad.
  *
  * Devuelve null si está vacío y NaN si no es un número.
  */
-export function parseQuantityInput(raw: string): number | null {
+export function parseQuantityInput(raw: string, unit: ProductUnit): number | null {
   const text = cleanNumberText(raw);
   if (!text) return null;
-  const normalized = text.replace(',', '.');
+  let normalized: string;
+  if (QUANTITY_THOUSANDS_WITH_DECIMALS.test(text)) {
+    normalized = text.replace(/\./g, '').replace(',', '.');
+  } else if (unit !== 'kg' && QUANTITY_THOUSANDS_ONLY.test(text)) {
+    normalized = text.replace(/[.,]/g, '');
+  } else {
+    normalized = text.replace(',', '.');
+  }
   if (!/^\d+(\.\d+)?$/.test(normalized) && !/^\.\d+$/.test(normalized)) return Number.NaN;
   return Number(normalized);
 }
 
-/** Valor inicial de un input de cantidad: coma decimal en kilos, enteros en el resto. */
+/**
+ * Valor inicial de un input de cantidad: coma decimal en kilos (hasta 3
+ * decimales, lo que marca la balanza: "11,235"), enteros en el resto.
+ */
 export function formatQuantityInput(quantity: number, unit: ProductUnit) {
   if (unit === 'kg') {
-    return String(Number(quantity.toFixed(2))).replace('.', ',');
+    return String(Number(quantity.toFixed(3))).replace('.', ',');
   }
   return String(Math.round(quantity));
 }

@@ -9,8 +9,16 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-export default function Page() {
+type PageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Page({ searchParams }: PageProps) {
+  // ?motivo=sesion lo pone el panel cuando la sesión vence mientras se usa: el
+  // login lo avisa. Se lee acá (servidor) para no necesitar useSearchParams y
+  // un Suspense en el componente de cliente.
+  const { motivo } = await searchParams;
   // El nombre sale de siteConfig acá (servidor): el componente del login es de
   // cliente y site.ts no se puede importar desde el navegador.
-  return <LoginPage storeName={siteConfig.storeName} />;
+  return <LoginPage storeName={siteConfig.storeName} sessionExpired={motivo === 'sesion'} />;
 }

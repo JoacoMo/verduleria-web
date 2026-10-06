@@ -54,6 +54,7 @@ const EXISTING_ORDER_SELECT = {
   paymentMethod: true,
   deliveryMethod: true,
   deliverySlot: true,
+  createdAt: true,
 } as const;
 
 type ExistingOrder = {
@@ -65,6 +66,7 @@ type ExistingOrder = {
   paymentMethod: string | null;
   deliveryMethod: string;
   deliverySlot: string | null;
+  createdAt: Date;
 };
 
 /**
@@ -82,6 +84,7 @@ function buildResponse(params: {
   deliveryMethod: DeliveryMethod;
   deliverySlot: DeliverySlot | null;
   priceDrops: CheckoutPriceChange[];
+  createdAt: Date;
   yaExistia?: boolean;
 }): CheckoutResponse {
   return {
@@ -98,6 +101,7 @@ function buildResponse(params: {
     whatsappNumber: siteConfig.whatsappNumber,
     storeName: siteConfig.storeName,
     priceDrops: params.priceDrops,
+    createdAt: params.createdAt.toISOString(),
     ...(params.yaExistia ? { yaExistia: true } : {}),
   };
 }
@@ -115,6 +119,9 @@ function responseForExisting(order: ExistingOrder, now: Date) {
     deliverySlot: slotFromId(order.deliverySlot, now),
     // El pedido ya se creó con los precios de ese momento: no hay nada nuevo que avisar.
     priceDrops: [],
+    // La hora en que se creó el pedido original (no la del reintento): con eso la
+    // tienda dice cuándo está listo un retiro, igual que el panel.
+    createdAt: order.createdAt,
     yaExistia: true,
   }));
 }
@@ -342,7 +349,7 @@ export async function POST(request: Request) {
           idempotencyKey,
           ...customer,
         },
-        select: { id: true },
+        select: { id: true, createdAt: true },
       });
 
       return NextResponse.json(buildResponse({
@@ -358,6 +365,7 @@ export async function POST(request: Request) {
         deliveryMethod,
         deliverySlot: slotCheck.slot,
         priceDrops,
+        createdAt: order.createdAt,
       }));
     } catch (error) {
       // P2002 = violación de índice único. Pasa cuando dos requests con la misma

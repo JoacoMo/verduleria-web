@@ -13,9 +13,10 @@ import { Spinner } from './admin/fields';
 import { ProductForm } from './admin/product-form';
 import { ProductList } from './admin/product-list';
 import { OrdersSection } from './admin/orders-section';
-import type { AdjustedItem } from './admin/order-adjust-editor';
+import type { AdjustedItem } from './admin/order-adjust-model';
 import { getArgentinaToday } from './admin/format';
-import { hasWeightItems, isOpenOrder } from './admin/orders-model';
+import { isAwaitingWeights, isOpenOrder, visibleOverdueOrders } from './admin/orders-model';
+import { clearAdjustDraft, describeHiddenDrafts, findHiddenDraftIds, listAdjustDraftOrderIds } from './admin/adjust-drafts';
 
 /**
  * Panel del dueño (/trastienda/gestion).
@@ -25,7 +26,14 @@ import { hasWeightItems, isOpenOrder } from './admin/orders-model';
  *
  * Sesión: la cookie httpOnly viaja sola en cada fetch same-origin. Al montar se
  * pregunta a /api/gestion/session si sigue vigente, y cualquier 401 posterior
- * (vencida, revocada) manda al login desde el cliente de API.
+ * (vencida, revocada) manda al login desde el cliente de API, con
+ * ?motivo=sesion para que el login diga que la sesión venció (antes volvía al
+ * login sin ningún mensaje). Los pesos que se estaban cargando quedan en
+ * sessionStorage (admin/adjust-drafts.ts) y se recuperan al volver.
+ *
+ * Pedidos: los del día elegido (GET /api/gestion/orders?date=) y, aparte, los
+ * pendientes de días anteriores (GET /api/gestion/orders/atrasados), que antes
+ * no se veían en ningún lado hasta que el cron los cancelaba.
  */
 
 /** Cada cuánto se refrescan solos los pedidos (con la pestaña visible). */
@@ -38,6 +46,31 @@ type SessionState = { status: 'checking' } | { status: 'ok' } | { status: 'error
 /** null = formulario cerrado; product null = producto nuevo. */
 type FormTarget = { product: Product | null } | null;
 
+/**
+ * Marca (por pestaña) de que acá hubo una sesión abierta. Sirve para distinguir
+ * "la sesión venció" de "nunca entró" cuando el 401 llega en la verificación
+ * inicial: en el celular, el navegador suele descartar la pestaña en segundo
+ * plano y la recarga al volver, horas después. Se borra al cerrar sesión.
+ */
+const SESSION_MARK_KEY = 'adm-sesion';
+
+function setSessionMark(active: boolean) {
+  try {
+    if (active) window.sessionStorage.setItem(SESSION_MARK_KEY, '1');
+    else window.sessionStorage.removeItem(SESSION_MARK_KEY);
+  } catch {
+    // Sin almacenamiento: el login no sabrá que venció, nada más.
+  }
+}
+
+function hadSessionInThisTab() {
+  try {
+    return window.sessionStorage.getItem(SESSION_MARK_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function upsertProduct(list: Product[], product: Product) {
   return list.some((item) => item.id === product.id)
     ? list.map((item) => (item.id === product.id ? product : item))
@@ -47,10 +80,15 @@ function upsertProduct(list: Product[], product: Product) {
 export default function AdminPanelPage() {
   const router = useRouter();
   const redirecting = useRef(false);
+  // La sesión ya se verificó en esta carga (o en esta pestaña antes de que el
+  // navegador la recargara): un 401 es que venció o se revocó mientras el dueño
+  // usaba el panel, y el login lo dice. Si nunca hubo sesión acá, va al login a secas.
+  const sessionVerified = useRef(false);
   const goToLogin = useCallback(() => {
     if (redirecting.current) return;
     redirecting.current = true;
-    router.replace(ADMIN_ROUTES.login);
+    const expired = sessionVerified.current || hadSessionInThisTab();
+    router.replace(expired ? `${ADMIN_ROUTES.login}?motivo=sesion` : ADMIN_ROUTES.login);
   }, [router]);
   const client = useMemo(() => createAdminClient(goToLogin), [goToLogin]);
   const { notices, notify, dismiss } = useNotices();
@@ -79,6 +117,14 @@ export default function AdminPanelPage() {
   const [busyOrderIds, setBusyOrderIds] = useState<ReadonlySet<number>>(() => new Set());
   const ordersRequest = useRef(0);
 
+  const [overdueOrders, setOverdueOrders] = useState<OrderRecord[]>([]);
+  const [overdueStatus, setOverdueStatus] = useState<LoadStatus>('loading');
+  const [overdueError, setOverdueError] = useState('');
+  const overdueRequest = useRef(0);
+  // Pedidos con pesos tipeados sin guardar (sesión vencida, por ejemplo) que no
+  // están en pantalla al entrar: se avisa dónde buscarlos.
+  const [hiddenDraftIds, setHiddenDraftIds] = useState<number[]>([]);
+
   /* ------------------------------------------------------------------------ */
   /* Carga de datos                                                           */
   /* ------------------------------------------------------------------------ */
@@ -87,6 +133,8 @@ export default function AdminPanelPage() {
     setSession({ status: 'checking' });
     const result = await client.get<{ ok: boolean }>(`${ADMIN_API}/session`, 'No se pudo verificar la sesión.');
     if (result.ok) {
+      sessionVerified.current = true;
+      setSessionMark(true);
       setSession({ status: 'ok' });
     } else if (result.status !== 401) {
       // 401 ya está yendo al login. Cualquier otra cosa (sin conexión, 429, 500)
@@ -95,7 +143,8 @@ export default function AdminPanelPage() {
     }
   }, [client]);
 
-  const loadOrders = useCallback(async (date: string) => {
+  /** Carga los pedidos del día. Devuelve la lista, o null si falló o quedó vieja. */
+  const loadOrders = useCallback(async (date: string): Promise<OrderRecord[] | null> => {
     ordersRequest.current += 1;
     const requestId = ordersRequest.current;
     setRefreshing(true);
@@ -105,19 +154,46 @@ export default function AdminPanelPage() {
     );
     // Si mientras tanto se pidió otro día (o se refrescó de nuevo), esta
     // respuesta ya no sirve: mostrarla pondría pedidos de otro día en pantalla.
-    if (requestId !== ordersRequest.current) return;
+    if (requestId !== ordersRequest.current) return null;
     setRefreshing(false);
 
     if (!result.ok) {
-      if (result.status === 401) return;
+      if (result.status === 401) return null;
       setOrdersError(result.error);
       setOrdersStatus('error');
-      return;
+      return null;
     }
-    setOrders(Array.isArray(result.data) ? result.data : []);
+    const list = Array.isArray(result.data) ? result.data : [];
+    setOrders(list);
     setOrdersStatus('ready');
     setOrdersError('');
     setLastUpdated(new Date());
+    // Si apareció un pedido con pesos sin guardar, su tarjeta ya abre el editor: no hace falta el aviso.
+    setHiddenDraftIds((current) => (current.length ? findHiddenDraftIds(current, list) : current));
+    return list;
+  }, [client]);
+
+  /** Carga los pendientes de días anteriores. Devuelve la lista, o null si falló o quedó vieja. */
+  const loadOverdue = useCallback(async (): Promise<OrderRecord[] | null> => {
+    overdueRequest.current += 1;
+    const requestId = overdueRequest.current;
+    const result = await client.get<OrderRecord[]>(
+      `${ADMIN_API}/orders/atrasados`,
+      'No se pudieron cargar los pedidos pendientes de días anteriores.',
+    );
+    if (requestId !== overdueRequest.current) return null;
+    if (!result.ok) {
+      if (result.status === 401) return null;
+      // Se deja la lista que había: un corte de un minuto no la vacía.
+      setOverdueError(result.error);
+      setOverdueStatus('error');
+      return null;
+    }
+    const list = Array.isArray(result.data) ? result.data : [];
+    setOverdueOrders(list);
+    setOverdueStatus('ready');
+    setOverdueError('');
+    return list;
   }, [client]);
 
   const loadProducts = useCallback(async () => {
@@ -158,8 +234,14 @@ export default function AdminPanelPage() {
     if (session.status !== 'ok') return;
     void loadProducts();
     void loadStoreInfo();
-    void loadOrders(selectedDateRef.current);
-  }, [session.status, loadProducts, loadStoreInfo, loadOrders]);
+    // Al entrar (por ejemplo, después de que venció la sesión): los pesos sin
+    // guardar de un pedido que está en pantalla se recuperan solos en su
+    // tarjeta; los de uno que no está (otro día) se avisan.
+    void Promise.all([loadOrders(selectedDateRef.current), loadOverdue()]).then(([dayOrders, overdue]) => {
+      if (!dayOrders || !overdue) return;
+      setHiddenDraftIds(findHiddenDraftIds(listAdjustDraftOrderIds(), [...dayOrders, ...overdue]));
+    });
+  }, [session.status, loadProducts, loadStoreInfo, loadOrders, loadOverdue]);
 
   // Los pedidos entran solos durante el día: se refrescan cada minuto y al
   // volver a la pestaña (por ejemplo, después de mandar un WhatsApp).
@@ -169,6 +251,7 @@ export default function AdminPanelPage() {
       if (document.visibilityState !== 'visible') return;
       setToday(getArgentinaToday());
       void loadOrders(selectedDateRef.current);
+      void loadOverdue();
     };
     const interval = window.setInterval(refreshIfVisible, ORDERS_POLL_MS);
     document.addEventListener('visibilitychange', refreshIfVisible);
@@ -176,7 +259,7 @@ export default function AdminPanelPage() {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', refreshIfVisible);
     };
-  }, [session.status, loadOrders]);
+  }, [session.status, loadOrders, loadOverdue]);
 
   function changeDate(date: string) {
     selectedDateRef.current = date;
@@ -189,7 +272,19 @@ export default function AdminPanelPage() {
 
   function refreshOrders() {
     setToday(getArgentinaToday());
+    reloadOrders();
+  }
+
+  /** Vuelve a pedir el día elegido y los pendientes de días anteriores. */
+  function reloadOrders() {
     void loadOrders(selectedDateRef.current);
+    void loadOverdue();
+  }
+
+  /** Descarta los pesos sin guardar de pedidos que no están en pantalla. */
+  function discardHiddenDrafts() {
+    for (const id of hiddenDraftIds) clearAdjustDraft(id);
+    setHiddenDraftIds([]);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -207,6 +302,22 @@ export default function AdminPanelPage() {
 
   function patchOrder(orderId: number, patch: Partial<OrderRecord>) {
     setOrders((current) => current.map((order) => (order.id === orderId ? { ...order, ...patch } : order)));
+    // Los pendientes de días anteriores son solo los abiertos: si se cerró, sale de la lista.
+    setOverdueOrders((current) => current.flatMap((order) => {
+      if (order.id !== orderId) return [order];
+      const next = { ...order, ...patch };
+      return isOpenOrder(next) ? [next] : [];
+    }));
+  }
+
+  function replaceOrder(updated: OrderRecord) {
+    setOrders((current) => current.map((order) => (order.id === updated.id ? updated : order)));
+    setOverdueOrders((current) => current.map((order) => (order.id === updated.id ? updated : order)));
+  }
+
+  function removeOrder(orderId: number) {
+    setOrders((current) => current.filter((order) => order.id !== orderId));
+    setOverdueOrders((current) => current.filter((order) => order.id !== orderId));
   }
 
   async function changeOrderStatus(order: OrderRecord, action: 'confirm' | 'cancel') {
@@ -223,20 +334,20 @@ export default function AdminPanelPage() {
       if (result.status === 401) return;
       notify('error', `Pedido #${order.id}: ${result.error}`);
       // 409/404: el pedido cambió o ya no existe; se recarga para ver cómo quedó.
-      if (result.status === 409 || result.status === 404) void loadOrders(selectedDateRef.current);
+      if (result.status === 409 || result.status === 404) reloadOrders();
       return;
     }
 
     patchOrder(order.id, { status: action === 'confirm' ? 'paid' : 'cancelled' });
     notify('success', action === 'confirm' ? `Pedido #${order.id} marcado como pagado.` : `Pedido #${order.id} cancelado.`);
-    void loadOrders(selectedDateRef.current);
+    reloadOrders();
   }
 
   function handleConfirmOrder(order: OrderRecord) {
     const question = order.paymentMethod === 'cash'
       ? `¿Ya cobraste en efectivo el pedido #${order.id} (${formatArs(order.total)})?`
       : `¿Llegó la transferencia del pedido #${order.id} (${formatArs(order.total)})?`;
-    const warning = !order.adjustedAt && hasWeightItems(order)
+    const warning = isAwaitingWeights(order)
       ? '\n\nOjo: todavía no cargaste los pesos reales, ese total es estimado.'
       : '';
     if (!window.confirm(question + warning)) return;
@@ -260,19 +371,39 @@ export default function AdminPanelPage() {
       if (result.status !== 401) notify('error', `Pedido #${order.id}: ${result.error}`);
       return;
     }
-    setOrders((current) => current.filter((item) => item.id !== order.id));
+    removeOrder(order.id);
     notify('success', `Pedido #${order.id} eliminado.`);
   }
 
-  async function handleAdjustOrder(order: OrderRecord, items: AdjustedItem[]): Promise<string | null> {
-    const result = await client.send<OrderRecord>(`${ADMIN_API}/orders/${order.id}`, 'PUT', { items }, 'No se pudo guardar el ajuste.');
+  /**
+   * Ajuste de pesos. `expectedUpdatedAt` es la versión del pedido sobre la que
+   * el dueño cargó los pesos (la que tenía al abrir el editor): si el pedido
+   * cambió desde entonces, el servidor responde 409 sin pisar nada. Ahí se
+   * recarga, y el editor (que conserva lo tipeado) muestra qué cambió.
+   */
+  async function handleAdjustOrder(order: OrderRecord, items: AdjustedItem[], expectedUpdatedAt: string | null): Promise<string | null> {
+    const result = await client.send<OrderRecord>(
+      `${ADMIN_API}/orders/${order.id}`,
+      'PUT',
+      { items, expectedUpdatedAt },
+      'No se pudo guardar el ajuste.',
+    );
     if (!result.ok) {
-      if (result.status === 409 || result.status === 404) void loadOrders(selectedDateRef.current);
+      if (result.status === 404) {
+        // Lo borraron desde otro lado: la tarjeta (y el editor) desaparecen al recargar.
+        notify('error', `Pedido #${order.id}: ${result.error}`);
+        reloadOrders();
+      } else if (result.status === 409) {
+        // Si lo cerraron desde otro lado, al recargar el editor se desmonta y
+        // el error que muestra adentro se pierde: se avisa también arriba.
+        notify('error', `Pedido #${order.id}: ${result.error}`);
+        reloadOrders();
+      }
       return result.error;
     }
-    setOrders((current) => current.map((item) => (item.id === order.id ? result.data : item)));
+    replaceOrder(result.data);
     notify('success', `Pedido #${order.id} ajustado. Total final: ${formatArs(result.data.total)}. Ya le podés avisar al cliente.`);
-    void loadOrders(selectedDateRef.current);
+    reloadOrders();
     return null;
   }
 
@@ -344,6 +475,8 @@ export default function AdminPanelPage() {
       notify('error', result.error);
       return;
     }
+    // Salió a propósito: el login no tiene que decir que la sesión venció.
+    setSessionMark(false);
     redirecting.current = true;
     router.replace(ADMIN_ROUTES.login);
   }
@@ -358,7 +491,9 @@ export default function AdminPanelPage() {
   }
 
   const storeName = storeInfo?.storeName ?? 'El Pampa';
-  const openOrdersCount = orders.filter(isOpenOrder).length;
+  // Sin cobrar: los del día elegido más los pendientes de días anteriores (sin contar dos veces).
+  const openOrdersCount = orders.filter(isOpenOrder).length
+    + (selectedDate === today ? visibleOverdueOrders(overdueOrders, orders).length : 0);
 
   if (session.status !== 'ok') {
     return (
@@ -430,10 +565,25 @@ export default function AdminPanelPage() {
         {/* Los dos paneles quedan montados (hidden): cambiar de pestaña no pierde
             un formulario a medio cargar ni un ajuste de pesos sin guardar. */}
         <div role="tabpanel" id="adm-panel-pedidos" aria-labelledby="adm-tab-pedidos" hidden={tab !== 'pedidos'}>
+          {hiddenDraftIds.length ? (
+            <InlineAlert
+              kind="info"
+              action={(
+                <button type="button" className="adm-btn adm-btn--ghost adm-btn--small" onClick={discardHiddenDrafts}>
+                  Descartar
+                </button>
+              )}
+            >
+              {describeHiddenDrafts(hiddenDraftIds)}
+            </InlineAlert>
+          ) : null}
           <OrdersSection
             orders={orders}
             status={ordersStatus}
             error={ordersError}
+            overdue={overdueOrders}
+            overdueStatus={overdueStatus}
+            overdueError={overdueError}
             selectedDate={selectedDate}
             today={today}
             refreshing={refreshing}

@@ -16,7 +16,7 @@ import {
   type ProductUnit,
 } from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
-import { describePickupReady, isStoreOpenNow } from '@/lib/store-hours';
+import { describePickupReady, isStoreOpenNow, getArgentinaParts } from '@/lib/store-hours';
 import type { CheckoutResponse, OrderItem, Product, StoreInfo } from '@/lib/types';
 import { buildWhatsappUrl } from '@/lib/whatsapp';
 import BolsonesSection from './storefront/bolsones-section';
@@ -339,9 +339,11 @@ export default function StorefrontPage({
   function handleCheckoutFailure(outcome: Exclude<CheckoutOutcome, { kind: 'ok' }>) {
     switch (outcome.kind) {
       case 'price-changed':
-        // Solo llega si algo SUBIÓ (si bajó, el pedido se crea con el precio menor).
+        // Llega si algo SUBIÓ, o si una baja igual cambia el trato (el total sube
+        // porque se pierde el envío gratis, o queda por debajo del mínimo); si
+        // solo bajó y nada de eso pasa, el pedido se crea con el precio menor.
         // El carrito toma el precio del catálogo, así que con actualizar el
-        // catálogo ya se ve el total nuevo. No se registró nada: confirma de nuevo.
+        // catálogo ya se ve el total nuevo. No se registró nada.
         setProducts((current) => applyPriceChanges(current, outcome.changes, correctedNow()));
         setNotice({ kind: 'price-changed', changes: outcome.changes });
         break;
@@ -395,9 +397,11 @@ export default function StorefrontPage({
     const hasWeight = orderItems.some((item) => isWeightUnit(item.unit));
     const isDeliveryOrder = finalOrder.deliveryMethod === 'delivery';
     const customerAddress = isDeliveryOrder ? form.values.customerAddress.trim() : null;
-    const orderTime = correctedNow();
-    // Cuándo está listo un retiro ("mañana desde las 8:00"), con la hora de ahora:
-    // se fija acá y no cambia mientras el cliente mira la confirmación.
+    // Cuándo está listo un retiro ("mañana desde las 8:00"), con la hora en que
+    // el SERVIDOR creó el pedido: es la misma que usa el panel para decidir si
+    // se arma hoy o mañana (y en un reintento, la del pedido original). Solo si
+    // una respuesta vieja no la trae se usa el reloj del celular corregido.
+    const orderTime = finalOrder.createdAt ? new Date(finalOrder.createdAt) : correctedNow();
     const pickupReady = isDeliveryOrder ? null : describePickupReady(orderTime);
     const { priceDrops } = finalOrder;
 
@@ -625,7 +629,7 @@ export default function StorefrontPage({
 
       <Toast toast={toast} overCart={isCartOpen} />
 
-      <SiteFooter storeInfo={storeInfo} />
+      <SiteFooter storeInfo={storeInfo} year={getArgentinaParts(renderNow).date.slice(0, 4)} />
     </>
   );
 }

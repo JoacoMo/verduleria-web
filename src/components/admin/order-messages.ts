@@ -4,6 +4,7 @@ import { formatProductQuantity } from '@/lib/product-units';
 import { lineTotal } from '@/lib/pricing';
 import { describeSlot } from '@/lib/delivery-slots';
 import { firstName } from './format';
+import { isAwaitingWeights } from './orders-model';
 
 /**
  * Mensajes de WhatsApp que el dueño le manda al cliente desde el panel.
@@ -33,9 +34,15 @@ function lowercaseFirst(text: string) {
  *
  * Un pedido viejo sin medio de pago guardado se trata como transferencia, que
  * era la única opción antes.
+ *
+ * El panel no deja mandarlo mientras haya productos por peso sin pesar (el
+ * botón queda deshabilitado). Igual, como defensa, en ese caso el total sale
+ * como "Total estimado" y no como "Total final": el cliente transfiere lo que
+ * dice el mensaje.
  */
 export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStoreInfo): string {
   const isDelivery = order.deliveryMethod === 'delivery';
+  const totalName = isAwaitingWeights(order) ? 'Total estimado' : 'Total final';
   const lines: string[] = [
     `${greeting(order)} tu pedido #${order.id} de ${store.storeName} ya está armado ✅`,
     '',
@@ -46,9 +53,9 @@ export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStor
   if (isDelivery) {
     lines.push(`Subtotal: ${formatArs(order.subtotal)}`);
     lines.push(`Envío: ${order.shippingCost > 0 ? formatArs(order.shippingCost) : 'gratis'}`);
-    lines.push(`*Total final: ${formatArs(order.total)}* (${order.shippingCost > 0 ? 'envío incluido' : 'envío gratis'})`);
+    lines.push(`*${totalName}: ${formatArs(order.total)}* (${order.shippingCost > 0 ? 'envío incluido' : 'envío gratis'})`);
   } else {
-    lines.push(`*Total final: ${formatArs(order.total)}*`);
+    lines.push(`*${totalName}: ${formatArs(order.total)}*`);
   }
   lines.push('');
 

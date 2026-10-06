@@ -4,6 +4,7 @@ import type { ProductCategory } from '@/lib/product-categories';
 import { formatArs } from '@/lib/format-price';
 import { roundMoney } from '@/lib/pricing';
 import { formatMoneyInput, parseMoneyInput, shiftDate, toArgentinaDate } from './format';
+import { errorFromBody } from './api';
 
 /**
  * Validación del formulario de producto en el navegador.
@@ -124,9 +125,23 @@ export function validateOffer(price: number | null, offerText: string, dateText:
   return { errors, offerPrice, offerEndsAt };
 }
 
+/**
+ * Mensaje de una subida de foto que falló. Un 413 que no trae el JSON de
+ * nuestra API es el corte de Vercel (más de 4,5 MB, FUNCTION_PAYLOAD_TOO_LARGE):
+ * antes se mostraba "No se pudo subir la imagen", que no dice qué hacer.
+ */
+export const IMAGE_TOO_LARGE_MESSAGE = 'La imagen es muy pesada. Probá con otra foto o con una captura de menor tamaño.';
+
+export function uploadErrorMessage(status: number, body: unknown, fallback: string) {
+  const serverMessage = errorFromBody(body, '');
+  if (serverMessage) return serverMessage;
+  return status === 413 ? IMAGE_TOO_LARGE_MESSAGE : fallback;
+}
+
 function validateImage(image: string) {
   if (!image) return null;
-  if (image.startsWith('/') && !image.startsWith('//')) return null;
+  // Igual que el servidor: "/\otro-sitio" el navegador lo resuelve como "//otro-sitio".
+  if (!image.includes('\\') && image.startsWith('/') && !image.startsWith('//')) return null;
   if (/^https?:\/\/\S+$/i.test(image)) return null;
   return 'Poné una dirección que empiece con https:// o subí una foto.';
 }
