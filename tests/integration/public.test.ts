@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { GET as getProducts } from '@/app/api/products/route';
 import { GET as getStoreInfo } from '@/app/api/store-info/route';
+import { compareProductNames } from '@/lib/product-order';
 import type { Product, StoreInfo } from '@/lib/types';
 import { SEED_PRODUCTS } from './seed-data';
 import { apiRequest, describeDb, prisma, readJson } from './helpers';
@@ -33,7 +34,9 @@ describeDb('GET /api/products', () => {
     expect(firstUnavailable).toBeGreaterThan(-1);
     expect(products.slice(firstUnavailable).every((product) => !product.available)).toBe(true);
     const availableNames = products.slice(0, firstUnavailable).map((product) => product.name);
-    expect(availableNames).toEqual([...availableNames].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    // El orden lo arma el servidor en castellano (compareProductNames), no la
+    // collation de la base: en CI (en_US.utf8) y en local (C.UTF-8) da lo mismo.
+    expect(availableNames).toEqual([...availableNames].sort(compareProductNames));
   });
 
   it('un error de base es un error (500), no un catálogo inventado', async () => {

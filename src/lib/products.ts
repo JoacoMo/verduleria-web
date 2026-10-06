@@ -3,6 +3,7 @@ import { unstable_cache, revalidateTag } from 'next/cache';
 import { prisma } from './prisma';
 import { isProductUnit } from './product-units';
 import { isProductCategory } from './product-categories';
+import { compareProducts } from './product-order';
 import type { Product } from './types';
 import type { Product as ProductRow } from '@prisma/client';
 
@@ -27,16 +28,6 @@ export const PRODUCTS_CACHE_TAG = 'productos';
 const CACHE_SECONDS = 60;
 
 /**
- * Los no disponibles van al final; dentro de cada grupo, alfabético.
- *
- * Es UNA sola consulta sin relaciones (no hay N+1 posible: categoría e imagen son
- * columnas del producto). Con un catálogo de verdulería (cientos de filas como
- * mucho) Postgres la resuelve con un seq scan más rápido que cualquier índice, y
- * encima queda cacheada: no hace falta indexar name/category/available.
- */
-const PRODUCT_ORDER = [{ available: 'desc' as const }, { name: 'asc' as const }];
-
-/**
  * Fila de la base → Product. Prisma devuelve unit/category como string y las
  * fechas como Date; se acota acá para que todo el resto de la app (y las
  * respuestas del panel) reciba el tipo ya validado y serializable.
@@ -58,9 +49,18 @@ export function toProduct(product: ProductRow): Product {
   };
 }
 
+/**
+ * Los no disponibles van al final; dentro de cada grupo, alfabético en
+ * castellano (compareProducts: el orden no depende de la collation de la base).
+ *
+ * Es UNA sola consulta sin relaciones (no hay N+1 posible: categoría e imagen son
+ * columnas del producto). Con un catálogo de verdulería (cientos de filas como
+ * mucho) Postgres la resuelve con un seq scan más rápido que cualquier índice, y
+ * encima queda cacheada: no hace falta indexar name/category/available.
+ */
 async function fetchProductsFromDb(): Promise<Product[]> {
-  const products = await prisma.product.findMany({ orderBy: PRODUCT_ORDER });
-  return products.map(toProduct);
+  const products = await prisma.product.findMany();
+  return products.map(toProduct).sort(compareProducts);
 }
 
 export const getCachedProducts = unstable_cache(

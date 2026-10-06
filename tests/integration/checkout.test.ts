@@ -711,7 +711,11 @@ describeDb('POST /api/checkout: rate limit y topes de spam', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const product = await createProduct({ price: 1000 });
     const prefix = `tope-global-${Date.now()}-`;
-    const recent = await prisma.order.count({ where: { createdAt: { gte: new Date(Date.now() - ORDER_CAPS.global.windowMs) } } });
+    // Se cuenta igual que el checkout (sin los cancelados): si otro archivo de
+    // tests dejó un cancelado de la última hora, faltaba uno para llegar al tope.
+    const recent = await prisma.order.count({
+      where: { createdAt: { gte: new Date(Date.now() - ORDER_CAPS.global.windowMs) }, status: { not: 'cancelled' } },
+    });
     const missing = Math.max(0, ORDER_CAPS.global.limit - recent);
     await prisma.order.createMany({
       data: Array.from({ length: missing }, (_, i) => ({
