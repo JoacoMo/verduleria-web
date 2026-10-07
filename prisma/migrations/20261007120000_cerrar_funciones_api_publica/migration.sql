@@ -16,7 +16,9 @@
 -- miembro): un REVOKE ON ALL FUNCTIONS falla entero con "permission denied" si
 -- hay en public una función de otro dueño (por ejemplo, de una extensión
 -- instalada por Supabase) sobre la que este rol no tiene ningún privilegio.
--- Las que se saltean se avisan con un NOTICE en el log del deploy.
+-- Las que se saltean no se pueden cerrar desde acá (Prisma no muestra los
+-- NOTICE de abajo): las lista con un aviso el build de producción
+-- (scripts/migrate-on-production.mjs).
 DO $$
 DECLARE
   rutina record;

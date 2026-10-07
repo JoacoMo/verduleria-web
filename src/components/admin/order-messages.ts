@@ -14,7 +14,7 @@ import { isAwaitingWeights, isShippingChargedApart } from './orders-model';
  * cómo lo escriba el dueño apurado a la hora del reparto.
  */
 
-export type FinalTotalStoreInfo = Pick<StoreInfo, 'storeName' | 'storeAddress' | 'transferAlias' | 'transferCbu'>;
+export type FinalTotalStoreInfo = Pick<StoreInfo, 'storeName' | 'storeAddress' | 'transferAlias' | 'transferCbu' | 'deliveryFreeThreshold'>;
 export type ReviewStoreInfo = Pick<StoreInfo, 'storeName' | 'googleReviewUrl'>;
 
 function greeting(order: Pick<OrderRecord, 'customerName'>) {
@@ -50,7 +50,7 @@ export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStor
     '',
   ];
 
-  if (isDelivery && isShippingChargedApart(order)) {
+  if (isDelivery && isShippingChargedApart(order, store.deliveryFreeThreshold)) {
     lines.push(`*${totalName}: ${formatArs(order.total)}* (sin el envío, que se paga aparte)`);
   } else if (isDelivery) {
     lines.push(`Subtotal: ${formatArs(order.subtotal)}`);
@@ -79,7 +79,10 @@ export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStor
     const alias = store.transferAlias.trim();
     const cbu = store.transferCbu.trim();
     if (alias || cbu) {
-      lines.push('', 'Para pagar por transferencia:');
+      // Con link de Mercado Pago (de antes): pudo haberlo pagado por ahí.
+      lines.push('', order.mercadoPagoLink
+        ? 'Si ya lo pagaste con el link de Mercado Pago, avisanos por acá y lo revisamos. Si no, podés pagarlo por transferencia:'
+        : 'Para pagar por transferencia:');
       // Alias y CBU van sin negrita y en su propia línea: al copiarlos desde
       // WhatsApp, los asteriscos se copian también y el home banking los rechaza.
       if (alias) lines.push(`Alias: ${alias}`);

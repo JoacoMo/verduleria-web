@@ -38,19 +38,28 @@ const EXAMPLE_SECRETS = new Set([
 ]);
 
 /**
- * Marcas de los valores de prueba que también están en el repo público (CI y
- * tests: "ci-jwt-secret-de-prueba-…", "secreto-de-tests-…"). Sirven en CI y en
+ * Valores de prueba que también están en el repo público (.github/workflows/ci.yml,
+ * tests/vitest.shared.ts, scripts/test_actualizar_precios.py). Sirven en CI y en
  * los tests, pero en producción serían una credencial que cualquiera conoce.
+ * Comparación exacta, no por "contiene": una contraseña elegida por el dueño que
+ * justo incluya "de-prueba" no tiene por qué estar en el repo. Un test compara
+ * esta lista con ci.yml y vitest.shared.ts para que no quede desactualizada.
  */
-const PUBLIC_TEST_MARKERS = ['de-prueba', 'de-tests'];
+const PUBLIC_TEST_SECRETS = new Set([
+  'ci-jwt-secret-de-prueba-0123456789-abcdefghij',
+  'ci-clave-de-prueba-0123456789',
+  'ci-cron-secret-de-prueba-0123456789',
+  'secreto-de-tests-con-mas-de-32-caracteres-para-jwt',
+  'clave-de-tests',
+  'cron-de-tests-0123456789',
+  'clave-de-prueba',
+]);
 
 /** Valor publicado en el repo (de ejemplo, o de prueba si es producción): no sirve como secreto. */
 export function isExampleSecret(value: string) {
   const normalized = value.trim();
   if (EXAMPLE_SECRETS.has(normalized)) return true;
-  if (process.env.VERCEL_ENV !== 'production') return false;
-  const lower = normalized.toLowerCase();
-  return PUBLIC_TEST_MARKERS.some((marker) => lower.includes(marker));
+  return process.env.VERCEL_ENV === 'production' && PUBLIC_TEST_SECRETS.has(normalized);
 }
 let shortSecretWarned = false;
 

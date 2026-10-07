@@ -33,6 +33,8 @@ export function describeStatusConflict(status: string) {
 /**
  * Columnas que necesita el panel. Se eligen a mano para que nunca salgan en una
  * respuesta la clave de idempotencia ni columnas históricas que ya no se usan.
+ * mpPreferenceId se lee solo para saber si el pedido tenía link de Mercado Pago
+ * (toOrderRecord lo convierte en un sí/no; el id no sale).
  */
 export const ORDER_RECORD_SELECT = {
   id: true,
@@ -50,6 +52,7 @@ export const ORDER_RECORD_SELECT = {
   customerAddress: true,
   notes: true,
   replacementPolicy: true,
+  mpPreferenceId: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.OrderSelect;
@@ -70,6 +73,7 @@ export type OrderRecordRow = {
   customerAddress: string | null;
   notes: string | null;
   replacementPolicy: string | null;
+  mpPreferenceId: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -125,6 +129,7 @@ export function toOrderRecord(row: OrderRecordRow): OrderRecord {
     customerAddress: row.customerAddress,
     notes: row.notes,
     replacementPolicy: row.replacementPolicy,
+    mercadoPagoLink: row.mpPreferenceId !== null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

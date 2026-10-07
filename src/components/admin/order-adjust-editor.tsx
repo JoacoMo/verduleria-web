@@ -25,11 +25,14 @@ import {
   type AdjustedItem,
 } from './order-adjust-model';
 import { clearAdjustDraft, readAdjustDraft, writeAdjustDraft } from './adjust-drafts';
+import { shippingLabel } from './orders-model';
 
 export type { AdjustedItem };
 
 type OrderAdjustEditorProps = {
   order: OrderRecord;
+  /** Para decir "Gratis" o "Aparte" igual que la tarjeta (null mientras carga). */
+  freeShippingThreshold: number | null;
   /**
    * Guarda el ajuste. `expectedUpdatedAt` es la versión del pedido sobre la que
    * se cargaron los pesos: si en el servidor ya es otra, responde 409 y no pisa
@@ -58,7 +61,7 @@ type EditorError = { message: string; version: string | null };
  * Borradores: cada cambio se guarda en sessionStorage (adjust-drafts.ts). Si la
  * sesión vence y hay que volver a entrar, el editor se abre solo con lo cargado.
  */
-export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditorProps) {
+export function OrderAdjustEditor({ order, freeShippingThreshold, onSave, onCancel }: OrderAdjustEditorProps) {
   const baseId = useId();
   const [start] = useState(() => {
     const stored = readAdjustDraft(order.id);
@@ -298,7 +301,7 @@ export function OrderAdjustEditor({ order, onSave, onCancel }: OrderAdjustEditor
         {isDelivery ? (
           <div>
             <dt>Envío</dt>
-            <dd className="adm-money">{order.shippingCost > 0 ? formatArs(order.shippingCost) : 'Gratis'} <span className="adm-muted">(no cambia)</span></dd>
+            <dd className="adm-money">{shippingLabel(order, freeShippingThreshold, formatArs)} <span className="adm-muted">(no cambia)</span></dd>
           </div>
         ) : null}
         <div className="adm-totals__total"><dt>Total final</dt><dd className="adm-money">{formatArs(totals.total)}</dd></div>

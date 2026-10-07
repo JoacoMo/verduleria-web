@@ -927,6 +927,12 @@ class TestHttp(Base):
                 ap.normalizar_url(url)
             self.assertNotIn('clave-secreta', str(error.exception))
             self.assertIn(ap.ENV_PASSWORD, str(error.exception))
+        # Con la "@" mal puesta urlsplit no ve la contraseña: igual no se repite.
+        for url in ('admin:clave-secreta@elpampa.vercel.app', 'https:/admin:clave-secreta@x', 'https:admin:clave-secreta@x',
+                    'https:///admin:clave-secreta@x', 'a@b:clave-secreta@c'):
+            with self.assertRaises(ap.ErrorConfig) as error:
+                ap.normalizar_url(url)
+            self.assertNotIn('clave-secreta', str(error.exception))
 
 
 class TestAplicar(Base):

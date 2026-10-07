@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import jwt from 'jsonwebtoken';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -186,17 +187,28 @@ describe('verifyAdminAuth', () => {
       expect(isExampleSecret(value)).toBe(false);
       vi.stubEnv('VERCEL_ENV', 'production');
       expect(isExampleSecret(value)).toBe(true);
-      expect(isExampleSecret(value.toUpperCase())).toBe(true);
+      expect(isExampleSecret(` ${value} `)).toBe(true);
       vi.stubEnv('JWT_SECRET', value);
       const result = verifyAdminAuth(withToken(token));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.response.status).toBe(500);
       vi.unstubAllEnvs();
     }
-    // Un secreto real (aleatorio) no se confunde.
+    // Un secreto real no se confunde, aunque contenga las mismas palabras.
     vi.stubEnv('VERCEL_ENV', 'production');
     expect(isExampleSecret('Yq3v0Zt8pX1mN6rL2kB9wH4cJ7dF5gS0')).toBe(false);
+    expect(isExampleSecret('Verduleria-De-Prueba-Larga-2026')).toBe(false);
     expect(isExampleSecret('cambiar-esta-clave')).toBe(true);
+  });
+
+  it('la lista de valores de prueba rechazados incluye todos los que están en ci.yml y vitest.shared.ts', () => {
+    vi.stubEnv('VERCEL_ENV', 'production');
+    const sources = [readFileSync('.github/workflows/ci.yml', 'utf8'), readFileSync('tests/vitest.shared.ts', 'utf8')];
+    const values = sources.flatMap((text) =>
+      [...text.matchAll(/^\s*(?:JWT_SECRET|ADMIN_PASSWORD|CRON_SECRET):\s*'?([^'\s]+)'?,?\s*$/gm)].map((match) => match[1]),
+    );
+    expect(values.length).toBeGreaterThanOrEqual(6);
+    for (const value of values) expect(isExampleSecret(value), value).toBe(true);
   });
 
   it('un token sin exp firmado con el secreto real igual vence a las 12 h (maxAge)', () => {

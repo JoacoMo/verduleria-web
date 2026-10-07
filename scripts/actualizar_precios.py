@@ -1670,7 +1670,10 @@ def normalizar_url(url: str) -> str:
             f'La dirección del sitio no puede llevar usuario ni contraseña: van en {ENV_USUARIO} y {ENV_PASSWORD}.'
         )
     if partes.scheme not in ('http', 'https') or not partes.netloc:
-        raise ErrorConfig(f'La dirección del sitio tiene que empezar con https:// (vino "{url}").')
+        # Si trae una "@" mal puesta ("admin:clave@sitio", "https:/admin:clave@sitio")
+        # urlsplit no ve usuario ni contraseña: lo de antes de la "@" no se repite.
+        mostrar = '***@' + url.rsplit('@', 1)[1] if '@' in url else url
+        raise ErrorConfig(f'La dirección del sitio tiene que empezar con https:// (vino "{mostrar}").')
     return f'{partes.scheme}://{partes.netloc}{partes.path.rstrip("/")}'
 
 

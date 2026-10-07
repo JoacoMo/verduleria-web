@@ -34,9 +34,8 @@ describe('estados', () => {
     expect(describeStatusConflict('raro')).toBe('El pedido ya figura como "raro".');
   });
 
-  it('el select del panel nunca expone la clave de idempotencia ni columnas de Mercado Pago', () => {
+  it('el select del panel nunca expone la clave de idempotencia ni el pago de Mercado Pago', () => {
     expect(Object.keys(ORDER_RECORD_SELECT)).not.toContain('idempotencyKey');
-    expect(Object.keys(ORDER_RECORD_SELECT)).not.toContain('mpPreferenceId');
     expect(Object.keys(ORDER_RECORD_SELECT)).not.toContain('mpPaymentId');
   });
 });
@@ -80,6 +79,7 @@ describe('toOrderRecord', () => {
     customerAddress: null,
     notes: null,
     replacementPolicy: 'replace',
+    mpPreferenceId: null,
     createdAt: new Date('2026-10-05T12:00:00Z'),
     updatedAt: new Date('2026-10-05T12:30:00Z'),
     ...overrides,
@@ -101,6 +101,13 @@ describe('toOrderRecord', () => {
       paymentMethod: null,
       adjustedAt: null,
     });
+  });
+
+  it('del link de Mercado Pago solo sale si lo tenía, nunca el id', () => {
+    const withLink = toOrderRecord(row({ mpPreferenceId: 'pref-123-secreta' }));
+    expect(withLink.mercadoPagoLink).toBe(true);
+    expect(JSON.stringify(withLink)).not.toContain('pref-123-secreta');
+    expect(toOrderRecord(row()).mercadoPagoLink).toBe(false);
   });
 
   it('un pedido de la versión anterior con subtotal 0 (valor por defecto de la migración) toma el total', () => {

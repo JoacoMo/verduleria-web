@@ -36,7 +36,7 @@ import { OrderAdjustEditor } from './order-adjust-editor';
 import { InlineAlert } from './notices';
 import type { AdjustedItem } from './order-adjust-model';
 import { clearAdjustDraft, readAdjustDraft } from './adjust-drafts';
-import { hasWeightItems, isAwaitingWeights, isOpenOrder, isPickupForNextDay, isShippingChargedApart, orderWeightKg, totalLabel } from './orders-model';
+import { hasWeightItems, isAwaitingWeights, isOpenOrder, isPickupForNextDay, orderWeightKg, shippingLabel, totalLabel } from './orders-model';
 import { describeDate, formatTime, mapsSearchUrl, toArgentinaDate } from './format';
 
 /** Guarda un ajuste de pesos sobre la versión `expectedUpdatedAt`. Devuelve el error a mostrar, o null si se guardó. */
@@ -98,7 +98,12 @@ export function OrderCard({ order, selectedDate, storeInfo, busy, onConfirm, onC
   const address = order.customerAddress?.trim() || null;
   const weightKg = isDelivery ? orderWeightKg(order) : 0;
   const tooHeavy = storeInfo !== null && weightKg > storeInfo.deliveryMaxWeightKg;
-  const paymentLabel = order.paymentMethod ? PAYMENT_METHOD_LABELS[order.paymentMethod] : 'Sin especificar (transferencia)';
+  const paymentLabel = order.paymentMethod
+    ? PAYMENT_METHOD_LABELS[order.paymentMethod]
+    : order.mercadoPagoLink
+      ? 'Link de Mercado Pago (de antes): revisá en Mercado Pago si se pagó'
+      : 'Sin especificar (transferencia)';
+  const freeShippingThreshold = storeInfo?.deliveryFreeThreshold ?? null;
   const PaymentIcon = order.paymentMethod === 'cash' ? Banknote : Landmark;
 
   // "Avisar total final" solo con el total real: con productos por peso sin
@@ -187,7 +192,12 @@ export function OrderCard({ order, selectedDate, storeInfo, busy, onConfirm, onC
       </dl>
 
       {adjusting && open ? (
-        <OrderAdjustEditor order={order} onSave={handleAdjust} onCancel={() => setAdjusting(false)} />
+        <OrderAdjustEditor
+          order={order}
+          freeShippingThreshold={freeShippingThreshold}
+          onSave={handleAdjust}
+          onCancel={() => setAdjusting(false)}
+        />
       ) : (
         <>
           {closedWhileAdjusting ? (
@@ -223,7 +233,7 @@ export function OrderCard({ order, selectedDate, storeInfo, busy, onConfirm, onC
                 <div>
                   <dt>Envío</dt>
                   <dd className="adm-money">
-                    {order.shippingCost > 0 ? formatArs(order.shippingCost) : isShippingChargedApart(order) ? 'Aparte' : 'Gratis'}
+                    {shippingLabel(order, freeShippingThreshold, formatArs)}
                   </dd>
                 </div>
               </>

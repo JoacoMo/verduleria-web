@@ -10,7 +10,7 @@
  * acá. Es lo mismo que ve cualquiera con F12 → Network.
  *
  * Uso (después de `next build`, con las mismas variables de prueba):
- *   node scripts/check-rendered-pages.mjs                       # levanta `next start` en el puerto 3100
+ *   node scripts/check-rendered-pages.mjs                       # levanta `next start` en un puerto libre
  *   node scripts/check-rendered-pages.mjs http://127.0.0.1:3000 # usa un servidor que ya está corriendo
  *
  * Busca lo mismo que el control del bundle (scripts/secret-scan.mjs). Nunca
@@ -19,10 +19,10 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { SERVER_ONLY_VARS, createSecretScanner } from './secret-scan.mjs';
 
-const PORT = 3100;
 const PAGES = [
   '/', '/bolsones', '/ofertas', '/frutas', '/verduras', '/envios', '/terminos', '/privacidad',
   '/trastienda', '/trastienda/gestion', '/no-existe-esta-pagina',
@@ -55,26 +55,54 @@ async function waitUntilUp(base, server) {
   return false;
 }
 
-function startServer() {
+/**
+ * Un puerto libre que elige el sistema: con uno fijo, si ya había otro servidor
+ * escuchando ahí, se revisaba ESE (y daba OK) mientras el nuestro moría.
+ */
+function freePort() {
+  return new Promise((done, fail) => {
+    const probe = createServer();
+    probe.once('error', fail);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => done(port));
+    });
+  });
+}
+
+function startServer(port) {
   const nextBin = resolve('node_modules/next/dist/bin/next');
   if (!existsSync(resolve('.next/BUILD_ID'))) {
     console.error('No hay build: corré `next build` antes de revisar las páginas.');
     process.exit(2);
   }
-  const server = spawn(process.execPath, [nextBin, 'start', '-p', String(PORT)], {
+  const server = spawn(process.execPath, [nextBin, 'start', '-H', '127.0.0.1', '-p', String(port)], {
     env: process.env,
     stdio: ['ignore', 'ignore', 'inherit'],
   });
+  // Si a este script lo cortan (Ctrl+C, timeout del job), no dejar el servidor vivo.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      server.kill('SIGTERM');
+      process.exit(2);
+    });
+  }
   return server;
+}
+
+/** El servidor que arrancamos sigue vivo (no murió, por ejemplo, por el puerto ocupado). */
+function isAlive(server) {
+  return !server || (server.exitCode === null && server.signalCode === null);
 }
 
 async function main() {
   const external = process.argv[2];
-  const base = (external ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
-  const server = external ? null : startServer();
+  const port = external ? null : await freePort();
+  const base = (external ?? `http://127.0.0.1:${port}`).replace(/\/$/, '');
+  const server = external ? null : startServer(port);
 
   try {
-    if (!(await waitUntilUp(base, server))) {
+    if (!(await waitUntilUp(base, server)) || !isAlive(server)) {
       console.error(`El servidor no respondió en ${base}: no se pudo revisar nada.`);
       process.exitCode = 2;
       return;
@@ -124,6 +152,12 @@ async function main() {
         `Nombres buscados: ${SERVER_ONLY_VARS.length}. ` +
         `Valores buscados: ${scanner.valueNames.length > 0 ? scanner.valueNames.join(', ') : 'ninguno (no hay variables sensibles de 8+ caracteres en el entorno)'}.`,
     );
+
+    if (!isAlive(server)) {
+      console.error('El servidor se cayó durante la revisión: el resultado no vale.');
+      process.exitCode = 2;
+      return;
+    }
 
     if (findings.length > 0) {
       console.error(`\nSe encontraron ${findings.length} posibles fugas de datos de servidor en lo que se le manda al navegador:`);

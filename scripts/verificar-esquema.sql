@@ -1,6 +1,7 @@
 -- Comprobación del esquema después de `prisma migrate deploy` en el build de
--- producción (scripts/migrate-on-production.mjs). No cambia nada: si falta algo
--- de lo que usa el código, corta con un error que dice qué es.
+-- producción (scripts/migrate-on-production.mjs la corre con el cliente de
+-- Prisma contra DATABASE_URL, la base que usa el código). No cambia nada: si
+-- falta algo de lo que usa el código, corta con un error que dice qué es.
 --
 -- `migrate deploy` solo mira qué migraciones figuran aplicadas, no su contenido:
 -- si una se aplicó a mano con una versión distinta (por ejemplo, la que creaba

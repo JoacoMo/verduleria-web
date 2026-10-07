@@ -31,10 +31,26 @@ export function isAwaitingWeights(order: Pick<OrderRecord, 'items' | 'adjustedAt
 /**
  * Envío de un pedido hecho antes de que el envío entrara en el total (sin medio
  * de pago guardado): en esa versión se cobraba aparte, así que no se puede
- * decir que fue gratis.
+ * decir que fue gratis. Salvo que superara el umbral de envío gratis: ese sí
+ * se le prometió gratis (el umbral es la misma variable en las dos versiones).
+ * Sin el umbral todavía (el panel lo está cargando), se toma como aparte.
  */
-export function isShippingChargedApart(order: Pick<OrderRecord, 'deliveryMethod' | 'paymentMethod' | 'shippingCost'>) {
-  return order.deliveryMethod === 'delivery' && order.paymentMethod === null && order.shippingCost <= 0;
+export function isShippingChargedApart(
+  order: Pick<OrderRecord, 'deliveryMethod' | 'paymentMethod' | 'shippingCost' | 'subtotal'>,
+  freeShippingThreshold: number | null,
+) {
+  if (order.deliveryMethod !== 'delivery' || order.paymentMethod !== null || order.shippingCost > 0) return false;
+  return freeShippingThreshold === null || order.subtotal < freeShippingThreshold;
+}
+
+/** "Gratis", "Aparte" o el costo: lo mismo en la tarjeta y en el editor de pesos. */
+export function shippingLabel(
+  order: Pick<OrderRecord, 'deliveryMethod' | 'paymentMethod' | 'shippingCost' | 'subtotal'>,
+  freeShippingThreshold: number | null,
+  formatMoney: (amount: number) => string,
+) {
+  if (order.shippingCost > 0) return formatMoney(order.shippingCost);
+  return isShippingChargedApart(order, freeShippingThreshold) ? 'Aparte' : 'Gratis';
 }
 
 /**

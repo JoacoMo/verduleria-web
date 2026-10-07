@@ -6,6 +6,8 @@ import {
   isAwaitingWeights,
   isCarriedPickup,
   isPickupForNextDay,
+  isShippingChargedApart,
+  shippingLabel,
   summarizeDay,
   summarizeOverdue,
   totalLabel,
@@ -63,6 +65,27 @@ describe('totalLabel / isAwaitingWeights', () => {
     expect(isAwaitingWeights(order())).toBe(false);
     expect(isAwaitingWeights(order({ adjustedAt: null, items: [{ id: 2, name: 'Acelga', price: 900, quantity: 2, unit: 'atado' }] }))).toBe(false);
     expect(isAwaitingWeights(order({ adjustedAt: null, items: [{ id: 3, name: 'Ajo', price: 5, quantity: 150, unit: 'g' }] }))).toBe(true);
+  });
+});
+
+describe('envío de pedidos de antes (sin medio de pago guardado)', () => {
+  const money = (amount: number) => `$${amount}`;
+  const legacy = (overrides: Partial<OrderRecord> = {}) => order({ paymentMethod: null, shippingCost: 0, subtotal: 2880, total: 2880, ...overrides });
+
+  it('debajo del umbral se cobraba aparte; desde el umbral era gratis', () => {
+    expect(isShippingChargedApart(legacy(), 20000)).toBe(true);
+    expect(shippingLabel(legacy(), 20000, money)).toBe('Aparte');
+    expect(isShippingChargedApart(legacy({ subtotal: 20000, total: 20000 }), 20000)).toBe(false);
+    expect(shippingLabel(legacy({ subtotal: 25000, total: 25000 }), 20000, money)).toBe('Gratis');
+    // Sin el umbral cargado todavía, se toma como aparte (no se promete nada).
+    expect(isShippingChargedApart(legacy({ subtotal: 25000, total: 25000 }), null)).toBe(true);
+  });
+
+  it('los pedidos de ahora no cambian: costo, o gratis si no se cobró', () => {
+    expect(shippingLabel(order(), 20000, money)).toBe('$4000');
+    expect(shippingLabel(order({ shippingCost: 0, subtotal: 22000, total: 22000 }), 20000, money)).toBe('Gratis');
+    expect(isShippingChargedApart(order({ shippingCost: 0 }), 20000)).toBe(false);
+    expect(isShippingChargedApart(legacy({ deliveryMethod: 'pickup' }), 20000)).toBe(false);
   });
 });
 

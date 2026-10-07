@@ -79,6 +79,19 @@ describe('buildFinalTotalMessage', () => {
     expect(text).toContain('Alias: el.pampa.verdu');
   });
 
+  it('un envío de antes que superaba el umbral sí tenía envío gratis: lo sigue diciendo', () => {
+    const text = buildFinalTotalMessage(order({ paymentMethod: null, shippingCost: 0, subtotal: 25000, total: 25000 }), STORE);
+    expect(text).toContain(`*Total final: ${formatArs(25000)}* (envío gratis)`);
+    expect(text).not.toContain('aparte');
+  });
+
+  it('con link de Mercado Pago (de antes) le pregunta si ya pagó antes de pedirle la transferencia', () => {
+    const text = buildFinalTotalMessage(order({ paymentMethod: null, mercadoPagoLink: true }), STORE);
+    expect(text).toContain('Si ya lo pagaste con el link de Mercado Pago, avisanos por acá y lo revisamos. Si no, podés pagarlo por transferencia:');
+    expect(text).not.toContain('Para pagar por transferencia:');
+    expect(text).toContain('Alias: el.pampa.verdu');
+  });
+
   it('en efectivo con retiro no manda alias y dice que paga al retirar', () => {
     const text = buildFinalTotalMessage(order({ deliveryMethod: 'pickup', paymentMethod: 'cash', shippingCost: 0, total: 2880, deliverySlot: null }), STORE);
     expect(text).toContain(`*Total final: ${formatArs(2880)}*`);

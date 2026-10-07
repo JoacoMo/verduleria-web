@@ -46,6 +46,12 @@ export type OrderRecord = {
   customerAddress: string | null;
   notes: string | null;
   replacementPolicy: string | null;
+  /**
+   * Pedido de cuando se cobraba con link de Mercado Pago: el cliente pudo pagar
+   * por ahí y ese aviso ya no llega, así que lo revisa el dueño. Solo el dato de
+   * que lo tenía, nunca el id de MP.
+   */
+  mercadoPagoLink?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
