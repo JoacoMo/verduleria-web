@@ -1,17 +1,75 @@
+import 'server-only';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';
 import { logSecurityEvent } from './security-log';
+import { getClientIp } from './rate-limit';
 
+/**
+ * Sesión del panel de administración.
+ *
+ * El token viaja en una cookie httpOnly + Secure + SameSite=Strict, no en
+ * localStorage: así ningún JavaScript de la página (ni uno inyectado) lo puede
+ * leer, y el navegador no lo manda en requests que vienen de otro sitio (CSRF).
+ * La cookie solo se envía a /api/gestion, que es lo único que la necesita.
+ *
+ * Revocación: el token lleva la versión de ADMIN_TOKEN_VERSION. Si se cambia esa
+ * variable en Vercel (por ejemplo, después de cambiar la contraseña o perder el
+ * celular) y se hace Redeploy —las variables nuevas solo aplican a deploys
+ * nuevos—, todos los tokens ya emitidos dejan de valer, sin rotar JWT_SECRET.
+ * "Cerrar sesión" borra la cookie de ese navegador; no revoca el token en sí.
+ */
 const TOKEN_ISSUER = 'el-pampa';
+export const ADMIN_COOKIE_NAME = 'elpampa_admin';
+const ADMIN_COOKIE_PATH = '/api/gestion';
+export const ADMIN_SESSION_SECONDS = 12 * 60 * 60;
 
 const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Valores de ejemplo publicados en .env.example (el repo es público). Si alguno
+ * llega a producción, cualquiera podría firmar una sesión de admin o entrar al
+ * panel: con estos valores se falla cerrado en vez de solo avisar.
+ */
+const EXAMPLE_SECRETS = new Set([
+  'cambiar-por-un-texto-largo-y-random',
+  'cambiar-por-otro-texto-largo-y-random',
+  'cambiar-esta-clave',
+]);
+
+/**
+ * Valores de prueba que también están en el repo público (.github/workflows/ci.yml,
+ * tests/vitest.shared.ts, scripts/test_actualizar_precios.py). Sirven en CI y en
+ * los tests, pero en producción serían una credencial que cualquiera conoce.
+ * Comparación exacta, no por "contiene": una contraseña elegida por el dueño que
+ * justo incluya "de-prueba" no tiene por qué estar en el repo. Un test compara
+ * esta lista con ci.yml y vitest.shared.ts para que no quede desactualizada.
+ */
+const PUBLIC_TEST_SECRETS = new Set([
+  'ci-jwt-secret-de-prueba-0123456789-abcdefghij',
+  'ci-clave-de-prueba-0123456789',
+  'ci-cron-secret-de-prueba-0123456789',
+  'secreto-de-tests-con-mas-de-32-caracteres-para-jwt',
+  'clave-de-tests',
+  'cron-de-tests-0123456789',
+  'clave-de-prueba',
+]);
+
+/** Valor publicado en el repo (de ejemplo, o de prueba si es producción): no sirve como secreto. */
+export function isExampleSecret(value: string) {
+  const normalized = value.trim();
+  if (EXAMPLE_SECRETS.has(normalized)) return true;
+  return process.env.VERCEL_ENV === 'production' && PUBLIC_TEST_SECRETS.has(normalized);
+}
 let shortSecretWarned = false;
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error('JWT_SECRET no está configurado.');
+  }
+  if (isExampleSecret(secret)) {
+    throw new Error('JWT_SECRET tiene un valor de ejemplo o de prueba publicado en el repo. Generá uno nuevo (openssl rand -base64 48) y hacé Redeploy.');
   }
 
   // Un secreto corto es más fácil de romper por fuerza bruta, pero cortar el
@@ -25,6 +83,10 @@ function getJwtSecret() {
   }
 
   return secret;
+}
+
+function getTokenVersion() {
+  return process.env.ADMIN_TOKEN_VERSION || '1';
 }
 
 /**
@@ -42,18 +104,63 @@ export function safeCompare(a: string, b: string) {
 }
 
 export function createAdminToken() {
-  return jwt.sign({ role: 'admin' }, getJwtSecret(), {
-    expiresIn: '12h',
+  return jwt.sign({ role: 'admin', v: getTokenVersion() }, getJwtSecret(), {
+    expiresIn: ADMIN_SESSION_SECONDS,
     issuer: TOKEN_ISSUER,
+    algorithm: 'HS256',
   });
 }
 
-export function verifyAdminAuth(authHeader: string | null, context?: { ip?: string; path?: string }) {
+function cookieAttributes(maxAgeSeconds: number) {
+  // En desarrollo (http://localhost) una cookie Secure no se guardaría.
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `Path=${ADMIN_COOKIE_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+/** Agrega a la respuesta la cookie de sesión con un token nuevo. */
+export function setAdminSessionCookie(response: NextResponse) {
+  response.headers.append('Set-Cookie', `${ADMIN_COOKIE_NAME}=${createAdminToken()}; ${cookieAttributes(ADMIN_SESSION_SECONDS)}`);
+  return response;
+}
+
+/** Borra la cookie de sesión (cerrar sesión). */
+export function clearAdminSessionCookie(response: NextResponse) {
+  response.headers.append('Set-Cookie', `${ADMIN_COOKIE_NAME}=; ${cookieAttributes(0)}`);
+  return response;
+}
+
+function readCookie(request: Request, name: string) {
+  const header = request.headers.get('cookie');
+  if (!header) return null;
+  for (const chunk of header.split(';')) {
+    const separator = chunk.indexOf('=');
+    if (separator === -1) continue;
+    if (chunk.slice(0, separator).trim() === name) {
+      return chunk.slice(separator + 1).trim() || null;
+    }
+  }
+  return null;
+}
+
+export type AdminAuthResult =
+  | { ok: true }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Verifica la sesión del panel. Uso al principio de cada handler de /api/gestion:
+ *
+ *   const auth = verifyAdminAuth(request);
+ *   if (!auth.ok) return auth.response;
+ */
+export function verifyAdminAuth(request: Request): AdminAuthResult {
+  const path = new URL(request.url).pathname;
+  const token = readCookie(request, ADMIN_COOKIE_NAME);
+
   const unauthorized = (message: string, reason: string) => {
     // Un token presente pero inválido es señal de que alguien está probando,
     // no de que el dueño se quedó sin sesión: se registra aparte.
-    if (authHeader) {
-      logSecurityEvent('token_invalido', { ...context, reason });
+    if (token) {
+      logSecurityEvent('token_invalido', { ip: getClientIp(request), path, method: request.method, reason });
     }
     return {
       ok: false as const,
@@ -61,32 +168,45 @@ export function verifyAdminAuth(authHeader: string | null, context?: { ip?: stri
     };
   };
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return unauthorized('No autorizado. Falta el token.', 'cabecera Authorization ausente o mal formada');
+  if (!token) {
+    return unauthorized('No autorizado. Iniciá sesión.', 'sin cookie de sesión');
   }
 
-  const token = authHeader.slice('Bearer '.length).trim();
-  if (!token) {
-    return unauthorized('No autorizado. Falta el token.', 'token vacío');
+  // Un JWT_SECRET faltante o de ejemplo es un error de configuración del
+  // servidor, no un token inválido: se responde 500 y se loguea como tal.
+  let secret: string;
+  try {
+    secret = getJwtSecret();
+  } catch (error) {
+    console.error('Error en verifyAdminAuth: configuración de JWT_SECRET inválida:', error);
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: 'El panel no está configurado.' }, { status: 500 }),
+    };
   }
 
   try {
-    const payload = jwt.verify(token, getJwtSecret(), {
+    const payload = jwt.verify(token, secret, {
       issuer: TOKEN_ISSUER,
       // Fijamos el algoritmo para descartar tokens firmados con otro (por ejemplo "none").
       algorithms: ['HS256'],
+      // Exige iat y corta a las 12 h aunque alguien firmara un token sin exp.
+      maxAge: ADMIN_SESSION_SECONDS,
     });
 
-    // Verificamos el claim de rol explícitamente: que el token esté bien firmado
-    // no alcanza, tiene que ser además un token de admin.
+    // Que el token esté bien firmado no alcanza: tiene que ser de admin y de la
+    // versión vigente (si no, es un token revocado).
     if (typeof payload !== 'object' || payload === null || payload.role !== 'admin') {
-      return unauthorized('Token inválido.', 'token bien firmado pero sin role=admin');
+      return unauthorized('Sesión inválida.', 'token bien firmado pero sin role=admin');
+    }
+    if (payload.v !== getTokenVersion()) {
+      return unauthorized('Tu sesión se cerró. Volvé a iniciar sesión.', 'token de una versión revocada');
     }
 
     return { ok: true as const };
   } catch {
     // El mensaje al cliente es genérico a propósito: no le decimos si el token
     // está vencido, mal firmado o es de otro emisor.
-    return unauthorized('Token inválido o vencido.', 'firma inválida, vencido o emisor incorrecto');
+    return unauthorized('Sesión vencida. Volvé a iniciar sesión.', 'firma inválida, vencido o emisor incorrecto');
   }
 }

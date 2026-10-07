@@ -2,8 +2,17 @@
 node_modules
 .next
 
-# Ignorar variables de entorno, contienen secretos como la contraseña de la BD
-.env
+# Variables de entorno: cualquier .env (incluido el .env.local que genera
+# `vercel env pull`) menos el de ejemplo. Contienen la contraseña de la BD, la
+# service role key de Supabase y el secreto de las sesiones.
+.env*
+!.env.example
+
+# Vercel CLI (vercel link)
+.vercel
+
+# Márgenes reales del negocio para el script de precios (el ejemplo sí va al repo)
+scripts/precios/margenes.json
 
 # Configuración local de Claude Code (permisos específicos de la máquina/sesión)
 .claude/settings.local.json
@@ -15,3 +24,33 @@ node_modules
 .mcp.json
 skills-lock.json
 tsconfig.tsbuildinfo
+
+# Script de precios: reportes y logs locales
+scripts/precios/reportes/
+scripts/precios/logs/
+__pycache__/
+*.pyc
+
+# Listas reales del mercado (costos del proveedor): solo van al repo las de ejemplo
+scripts/precios/*.xlsx
+scripts/precios/*.xls
+scripts/precios/*.csv
+scripts/precios/*.ods
+!scripts/precios/lista-mercado-ejemplo.xlsx
+!scripts/precios/lista-mercado-ejemplo.csv
+
+# Cosas que no deberían terminar nunca en un repo público
+*.log
+*.pem
+*.key
+*.p12
+*.dump
+*.sql.gz
+dump*.sql
+backup*.sql
+cookies*.txt
+.DS_Store
+
+# Tests: reportes de cobertura y caché de Vitest
+coverage/
+.vitest/

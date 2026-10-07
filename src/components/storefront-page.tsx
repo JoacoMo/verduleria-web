@@ -1,766 +1,635 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import Link from 'next/link';
-import type { OrderConfirmation, OrderItem, Product, StoreInfo } from '@/lib/types';
-import type { ProductUnit } from '@/lib/product-units';
-import { PRODUCT_CART_STEP, PRODUCT_DEFAULT_CART_QUANTITY, PRODUCT_UNIT_LABELS, formatProductQuantity, normalizeProductQuantity } from '@/lib/product-units';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import dynamic from 'next/dynamic';
+import { Leaf, RotateCw } from 'lucide-react';
+import { computeTotals } from '@/lib/pricing';
+import { PRODUCT_CATEGORIES, type CategoryFilter } from '@/lib/product-categories';
+import {
+  PRODUCT_CART_STEP,
+  PRODUCT_DEFAULT_CART_QUANTITY,
+  PRODUCT_MAX_CART_QUANTITY,
+  isWeightUnit,
+  lineWeightKg,
+  normalizeProductQuantity,
+  type ProductUnit,
+} from '@/lib/product-units';
 import { matchesSearch } from '@/lib/search';
-import { formatArs } from '@/lib/format-price';
-import { isPastOrderCutoff, isStoreOpenNow } from '@/lib/store-hours';
-import { PRODUCT_CATEGORIES, type ProductCategory } from '@/lib/product-categories';
+import { describePickupReady, isStoreOpenNow, getArgentinaParts } from '@/lib/store-hours';
+import type { CheckoutResponse, OrderItem, Product, StoreInfo } from '@/lib/types';
+import { buildWhatsappUrl } from '@/lib/whatsapp';
+import BolsonesSection from './storefront/bolsones-section';
+import type { CartDrawerProps } from './storefront/cart-drawer';
+import CartDrawerUnavailable from './storefront/cart-drawer-unavailable';
+import CartFab from './storefront/cart-fab';
+import CatalogFilters from './storefront/catalog-filters';
+import { applyPriceChanges, markUnavailable } from './storefront/catalog-updates';
+import type { CheckoutOutcome } from './storefront/checkout-api';
+import { focusCheckoutField } from './storefront/checkout-focus';
+import ContactSection from './storefront/contact-section';
+import { pluralize } from './storefront/format';
+import Hero, { type StorefrontHeading } from './storefront/hero';
+import type { buildOrderWhatsappUrl } from './storefront/order-message';
+import ProductGrid from './storefront/product-grid';
+import SiteFooter from './storefront/site-footer';
+import SiteNav from './storefront/site-nav';
+import StoreRules from './storefront/store-rules';
+import { Toast, useToast } from './storefront/toast';
+import { useCart } from './storefront/use-cart';
+import { useCheckoutForm } from './storefront/use-checkout-form';
+import { correctedNow, useClientClock } from './storefront/use-client-clock';
+import { useDeliverySlots } from './storefront/use-delivery-slots';
+import { useProductPricing } from './storefront/use-product-pricing';
+import type { CheckoutNotice, CheckoutStep, OrderConfirmationData, ProductPriceView } from './storefront/types';
 
-type CartItem = Product & { quantity: number };
-type CategoryFilter = ProductCategory | 'Todas';
+export type StorefrontPageProps = {
+  /**
+   * Productos renderizados en el servidor. Son el catálogo de la tienda: el HTML
+   * ya viene con la lista (los buscadores y los crawlers de IA no ejecutan
+   * JavaScript) y el navegador no vuelve a pedirla.
+   */
+  initialProducts: Product[];
+  /** Datos públicos del local (getPublicStoreInfo()). */
+  storeInfo: StoreInfo;
+  /** Filtro preseleccionado en las páginas de categoría (/frutas, /bolsones, /ofertas...). */
+  initialCategory?: CategoryFilter;
+  /** h1 y bajada propios de la página; sin esto, los de la home. */
+  heading?: StorefrontHeading;
+  /** Contenido de servidor que va después del catálogo (sobre el local, preguntas frecuentes). */
+  infoSection?: ReactNode;
+  /**
+   * Hora (ms) con la que el servidor armó la página. El primer render del
+   * navegador usa esta misma hora, así el HTML coincide aunque el reloj del
+   * celular esté corrido (si no, React tira el error #418 y vuelve a dibujar
+   * todo), y sirve para corregir ese reloj (useClientClock).
+   */
+  renderedAt?: number;
+};
 
-const PLACEHOLDER_IMAGE = '/product-placeholder.svg';
 const INITIAL_VISIBLE_PRODUCTS = 8;
-const MAP_DIRECTIONS_URL = 'https://maps.google.com/?cid=899078826367002557';
+const RELATED_LIMIT = 4;
 const CATEGORY_FILTERS: CategoryFilter[] = ['Todas', ...PRODUCT_CATEGORIES];
 
-const DEFAULT_STORE_INFO: StoreInfo = {
-  storeName: 'El Pampa',
-  storeAddress: 'Rosario de Santafe 1211, Córdoba Capital',
-  storeHours: {
-    weekday: 'Lunes a sábado de 8:00 a 14:00 y de 17:30 a 21:30',
-    sunday: 'Domingos de 9:00 a 14:00',
-  },
-  transferAlias: 'jgastaldo',
-  transferCbu: '',
-  whatsappNumber: '5493517656500',
-  deliveryProviderName: 'Uber Moto',
-  deliveryMaxWeightKg: 7,
-  deliveryMinPurchase: 10000,
-  deliveryFreeThreshold: 20000,
-  instagramUrl: '',
-};
+function matchesCategory(product: Product, category: CategoryFilter, price: ProductPriceView | undefined) {
+  if (category === 'Todas') return true;
+  // "Ofertas" es la categoría vieja más cualquier producto con oferta vigente.
+  if (category === 'Ofertas') return product.category === 'Ofertas' || Boolean(price?.onOffer);
+  return product.category === category;
+}
 
-type StorefrontPageProps = {
-  /**
-   * Productos renderizados en el servidor. Sirven de estado inicial para que el
-   * HTML ya venga con la lista: si esperamos al fetch del cliente, los buscadores
-   * y sobre todo los crawlers de IA (que no ejecutan JavaScript) ven la tienda vacía.
-   */
-  initialProducts?: Product[];
-  /** Bloque "Sobre el local" + preguntas frecuentes, renderizado en el servidor. */
-  infoSection?: ReactNode;
-};
+/**
+ * Abre la pestaña de WhatsApp en blanco, dentro del gesto del toque: si se
+ * abriera después del fetch, el navegador la bloquearía como popup. Se le corta
+ * el acceso a esta pestaña (opener) antes de mandarla a wa.me.
+ */
+function openBlankTab() {
+  try {
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    return tab;
+  } catch {
+    return null;
+  }
+}
 
-export default function StorefrontPage({ initialProducts = [], infoSection }: StorefrontPageProps) {
+/**
+ * El carrito y el checkout van en un chunk aparte (cart-drawer-chunk.ts): son
+ * casi la mitad del JS propio de la página y no se usan hasta abrir el carrito.
+ * Se precargan con el primer producto agregado o al acercarse al botón.
+ *
+ * Si el chunk no se puede bajar (sin señal, o una versión nueva de la tienda
+ * borró el archivo de la anterior), en vez de romper la página se muestra un
+ * aviso para recargar: el carrito está guardado en el navegador.
+ */
+const loadCartChunk = () => import('./storefront/cart-drawer-chunk');
+
+const CartDrawer = dynamic<CartDrawerProps>(
+  () => import('./storefront/cart-drawer-chunk').catch((error: unknown) => {
+    console.error('No se pudo cargar el carrito:', error);
+    return { default: CartDrawerUnavailable };
+  }),
+  { ssr: false },
+);
+
+const CONTACT_MESSAGE = '¡Hola! Quise hacer un pedido por la web y no me dejó confirmarlo.';
+
+const NETWORK_ERROR_MESSAGE = 'Parece que se cortó la conexión. Revisá la señal y tocá «Confirmar pedido» de nuevo: si el pedido ya había llegado, no se duplica.';
+const SERVER_ERROR_MESSAGE = 'Tuvimos un problema al registrar el pedido. Probá de nuevo en un ratito o escribinos por WhatsApp.';
+
+/**
+ * Tienda pública. Este componente solo orquesta: el estado vive en hooks
+ * (carrito, formulario, turnos) y la interfaz en los componentes de
+ * src/components/storefront/.
+ */
+export default function StorefrontPage({
+  initialProducts,
+  storeInfo,
+  initialCategory = 'Todas',
+  heading,
+  infoSection,
+  renderedAt,
+}: StorefrontPageProps) {
+  // Catálogo en memoria: arranca con lo que vino del servidor y solo cambia si el
+  // checkout avisa que cambió un precio o que algo se quedó sin stock.
   const [products, setProducts] = useState<Product[]>(initialProducts);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [storeInfo, setStoreInfo] = useState<StoreInfo>(DEFAULT_STORE_INFO);
-  const [orderConfirmation, setOrderConfirmation] = useState<OrderConfirmation | null>(null);
-  const [isDelivery, setIsDelivery] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'mercadopago'>('transfer');
+
+  // La hora para las ofertas: en el primer render, la del servidor (renderedAt),
+  // así el navegador dibuja exactamente el mismo HTML aunque su reloj esté mal;
+  // ya montado, la del reloj del cliente (corregido si estaba corrido), que se
+  // actualiza cada minuto.
+  const clientNow = useClientClock(renderedAt);
+  const [renderNow] = useState(() => new Date(renderedAt ?? Date.now()));
+  const now = clientNow ?? renderNow;
+
+  const pricing = useProductPricing(products, now);
+  const cart = useCart(products, now);
+  const slots = useDeliverySlots(clientNow);
+  const form = useCheckoutForm({ hasSelectedSlot: slots.selectedSlot !== null });
+  const { toast, showToast } = useToast();
+
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
-  // Clave del intento de compra en curso. Sobrevive a los re-render (por eso ref
-  // y no state) y se renueva solo cuando el pedido se registra bien.
-  const checkoutKeyRef = useRef<string | null>(null);
-  const [unitModes, setUnitModes] = useState<Record<number, ProductUnit>>({});
-  const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
+  // El panel se monta (cerrado) cuando su chunk ya está, o al abrirlo.
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  const cartChunkRequestedRef = useRef(false);
+  const [checkoutStep, setCheckoutStep] = useState<CheckoutStep>('cart');
   const [searchQuery, setSearchQuery] = useState('');
+  // El filtrado usa el valor diferido: en un celular lento escribir en el
+  // buscador no se traba mientras se redibuja la grilla.
+  const deferredQuery = useDeferredValue(searchQuery);
   const [showAllProducts, setShowAllProducts] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<CategoryFilter>('Todas');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [storeStatus, setStoreStatus] = useState<{ open: boolean; pastCutoff: boolean } | null>(null);
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>(initialCategory);
+  const [gridQuantities, setGridQuantities] = useState<Record<number, number>>({});
+  const [confirmation, setConfirmation] = useState<OrderConfirmationData | null>(null);
+  const [notice, setNotice] = useState<CheckoutNotice | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Primera barrera contra el doble toque (el estado tarda un render en verse).
+  // La que de verdad evita pedidos duplicados es la clave de idempotencia.
+  const submittingRef = useRef(false);
+  // Clave del intento de compra en curso. Sobrevive a los re-render (por eso ref
+  // y no state) y se renueva cuando cambia el carrito o se registra el pedido.
+  const checkoutKeyRef = useRef<string | null>(null);
 
+  const { items, lines } = cart;
+  const { deliveryMethod, isDelivery } = form;
+
+  // Si el carrito o la forma de entrega cambian, es otra compra: la clave
+  // anterior ya no corresponde (si no, un reintento devolvería el pedido viejo).
   useEffect(() => {
-    if (!toastMessage) return;
-    const timeout = setTimeout(() => setToastMessage(null), 2500);
-    return () => clearTimeout(timeout);
-  }, [toastMessage]);
+    checkoutKeyRef.current = null;
+  }, [lines, deliveryMethod]);
 
+  // Un aviso del checkout deja de tener sentido apenas el cliente toca el carrito.
   useEffect(() => {
-    function updateStoreStatus() {
-      setStoreStatus({ open: isStoreOpenNow(), pastCutoff: isPastOrderCutoff() });
-    }
-    updateStoreStatus();
-    const interval = setInterval(updateStoreStatus, 60_000);
-    return () => clearInterval(interval);
-  }, []);
-  const totalWeight = useMemo(() => cart.reduce((sum, item) => item.unit === 'kg' ? sum + item.quantity : sum, 0), [cart]);
+    setNotice(null);
+  }, [lines, deliveryMethod]);
 
+  // Si se vació el carrito estando en "Tus datos", se vuelve al primer paso.
   useEffect(() => {
-    if (!isCartOpen) return;
+    if (items.length === 0 && cart.storageLoaded) setCheckoutStep('cart');
+  }, [items.length, cart.storageLoaded]);
 
-    document.body.style.overflow = 'hidden';
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setIsCartOpen(false);
-    }
-    window.addEventListener('keydown', handleKeyDown);
+  const totals = useMemo(
+    () => computeTotals(items.map((item) => ({ price: item.unitPrice, quantity: item.quantity })), isDelivery, storeInfo),
+    [items, isDelivery, storeInfo],
+  );
+  const hasWeightItems = useMemo(() => items.some((item) => isWeightUnit(item.unit)), [items]);
+  const totalWeightKg = useMemo(() => items.reduce((sum, item) => sum + lineWeightKg(item), 0), [items]);
 
-    return () => {
-      document.body.style.overflow = '';
-      window.removeEventListener('keydown', handleKeyDown);
+  const storeStatus = useMemo(
+    () => (clientNow ? { open: isStoreOpenNow(clientNow), pickupReady: describePickupReady(clientNow) } : null),
+    [clientNow],
+  );
+
+  const imagesById = useMemo(() => new Map(products.map((product) => [product.id, product.image])), [products]);
+
+  // ---- Catálogo: bolsones, filtros y búsqueda ----
+
+  const query = deferredQuery.trim();
+  const isSearching = query.length > 0;
+  const bolsones = useMemo(() => products.filter((product) => product.category === 'Bolsones'), [products]);
+  const showBolsonesSection = bolsones.length > 0 && activeCategory === 'Todas' && !isSearching;
+
+  // Solo se muestran los filtros que tienen algo (más "Todas" y el elegido).
+  const visibleCategories = useMemo(() => CATEGORY_FILTERS.filter((category) => (
+    category === 'Todas'
+    || category === activeCategory
+    || products.some((product) => matchesCategory(product, category, pricing.get(product.id)))
+  )), [products, pricing, activeCategory]);
+
+  const filteredProducts = useMemo(() => products.filter((product) => {
+    // Con la sección de bolsones a la vista, no se repiten en la grilla.
+    if (showBolsonesSection && product.category === 'Bolsones') return false;
+    if (!matchesCategory(product, activeCategory, pricing.get(product.id))) return false;
+    if (!query) return true;
+    return matchesSearch(product.name, query) || (product.description ? matchesSearch(product.description, query) : false);
+  }), [products, pricing, activeCategory, query, showBolsonesSection]);
+
+  // Se dibujan todos (el HTML trae el catálogo completo); los que pasan del
+  // límite van plegados hasta "Ver todos los productos".
+  const collapseAfter = isSearching || showAllProducts ? null : INITIAL_VISIBLE_PRODUCTS;
+  const hasMoreProducts = !isSearching && !showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
+
+  // ---- Sugerencias del carrito ----
+
+  const cartIds = useMemo(() => new Set(lines.map((line) => line.id)), [lines]);
+  const hasBolsonInCart = items.some((item) => item.category === 'Bolsones');
+
+  const suggestedBolson = useMemo(() => {
+    if (items.length === 0 || hasBolsonInCart) return null;
+    return bolsones.find((product) => product.available && !cartIds.has(product.id)) ?? null;
+  }, [items.length, hasBolsonInCart, bolsones, cartIds]);
+
+  // Primero bolsones, después ofertas, después el resto (sort es estable).
+  const relatedProducts = useMemo(() => {
+    if (items.length === 0) return [];
+    const rank = (product: Product) => {
+      if (product.category === 'Bolsones') return 0;
+      return pricing.get(product.id)?.onOffer ? 1 : 2;
     };
-  }, [isCartOpen]);
+    return products
+      .filter((product) => product.available && !cartIds.has(product.id) && product.id !== suggestedBolson?.id)
+      .sort((a, b) => rank(a) - rank(b))
+      .slice(0, RELATED_LIMIT);
+  }, [items.length, products, pricing, cartIds, suggestedBolson]);
 
+  // ---- Acciones (estables: bajan a tarjetas memorizadas) ----
+
+  /** Baja el chunk del carrito (una vez) y, cuando está, monta el panel cerrado. */
+  const preloadCart = useCallback(() => {
+    if (cartChunkRequestedRef.current) return;
+    cartChunkRequestedRef.current = true;
+    loadCartChunk().then(
+      () => setDrawerRequested(true),
+      () => {
+        // Se reintenta en el próximo gesto; si al abrir sigue fallando, el
+        // panel muestra el aviso para recargar.
+        cartChunkRequestedRef.current = false;
+      },
+    );
+  }, []);
+
+  // Con el primer producto en el carrito (o un carrito guardado) se precarga,
+  // sin competir con la carga de la página.
+  const hasItems = items.length > 0;
   useEffect(() => {
-    if (!isMenuOpen) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setIsMenuOpen(false);
+    if (!hasItems) return;
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(preloadCart, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
     }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isMenuOpen]);
+    const id = window.setTimeout(preloadCart, 200);
+    return () => window.clearTimeout(id);
+  }, [hasItems, preloadCart]);
 
-  /**
-   * Lleva a una sección de la página y cierra el menú.
-   *
-   * Se usa scrollIntoView en vez de un href="#seccion" para poder cerrar el menú
-   * en el mismo gesto y no dejar el hash colgado en la URL.
-   */
-  function goToSection(sectionId: string) {
-    setIsMenuOpen(false);
+  const openCart = useCallback(() => {
+    setDrawerRequested(true);
+    setIsCartOpen(true);
+  }, []);
+  const closeCart = useCallback(() => setIsCartOpen(false), []);
 
-    if (sectionId === 'inicio') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+  const handleAdjustGrid = useCallback((productId: number, unit: ProductUnit, direction: 1 | -1) => {
+    const step = PRODUCT_CART_STEP[unit];
+    setGridQuantities((current) => {
+      const currentQuantity = current[productId] ?? PRODUCT_DEFAULT_CART_QUANTITY[unit];
+      const next = normalizeProductQuantity(currentQuantity + direction * step, unit);
+      if (next < step || next > PRODUCT_MAX_CART_QUANTITY[unit]) return current;
+      return { ...current, [productId]: next };
+    });
+  }, []);
+
+  const { addToCart } = cart;
+  const handleAdd = useCallback((product: Product, quantity?: number) => {
+    if (!addToCart(product, quantity)) return;
+    // Si quedaba a la vista la confirmación del pedido anterior, esto ya es otra
+    // compra: al abrir el carrito tiene que verse el carrito, no el pedido viejo.
+    setConfirmation(null);
+    showToast(`${product.name} agregado al carrito`);
+  }, [addToCart, showToast]);
+
+  const handleAddSuggestion = useCallback((product: Product) => handleAdd(product), [handleAdd]);
+
+  const handleCategoryChange = useCallback((category: CategoryFilter) => {
+    setActiveCategory(category);
+    setShowAllProducts(false);
+  }, []);
+
+  function handleRepeatLastOrder() {
+    const result = cart.repeatLastOrder();
+    if (result.loaded === 0) {
+      showToast('Los productos de tu último pedido no están disponibles hoy');
+      return;
+    }
+    setConfirmation(null);
+    setCheckoutStep('cart');
+    setDrawerRequested(true);
+    setIsCartOpen(true);
+    showToast(result.missing > 0
+      ? `Cargamos tu último pedido (${result.missing} ${pluralize(result.missing, 'producto', 'productos')} sin stock hoy)`
+      : 'Cargamos tu último pedido');
+  }
+
+  function handleFinishConfirmation() {
+    setConfirmation(null);
+    setIsCartOpen(false);
+  }
+
+  // ---- Checkout ----
+
+  function handleCheckoutFailure(outcome: Exclude<CheckoutOutcome, { kind: 'ok' }>) {
+    switch (outcome.kind) {
+      case 'price-changed':
+        // Llega si algo SUBIÓ, o si una baja igual cambia el trato (el total sube
+        // porque se pierde el envío gratis, o queda por debajo del mínimo); si
+        // solo bajó y nada de eso pasa, el pedido se crea con el precio menor.
+        // El carrito toma el precio del catálogo, así que con actualizar el
+        // catálogo ya se ve el total nuevo. No se registró nada.
+        setProducts((current) => applyPriceChanges(current, outcome.changes, correctedNow()));
+        setNotice({ kind: 'price-changed', changes: outcome.changes });
+        break;
+      case 'unavailable':
+        setProducts((current) => markUnavailable(current, outcome.ids));
+        setNotice({ kind: 'unavailable', ids: outcome.ids });
+        break;
+      case 'slot':
+        slots.replaceWithServerSlots(outcome.availableSlots);
+        setNotice({ kind: 'slot' });
+        window.requestAnimationFrame(() => focusCheckoutField('deliverySlot'));
+        break;
+      case 'rate-limited':
+      case 'busy':
+        // Topes contra el spam (muchos intentos, muchos pedidos con el mismo
+        // teléfono o demasiados pedidos en la última hora): el mensaje del
+        // servidor y WhatsApp a mano, para no perder un pedido de verdad.
+        setNotice({
+          kind: 'error',
+          message: outcome.message,
+          contactUrl: buildWhatsappUrl(storeInfo.whatsappNumber, CONTACT_MESSAGE),
+        });
+        break;
+      case 'invalid':
+        setNotice({ kind: 'error', message: outcome.message });
+        break;
+      case 'network':
+        // La clave NO se limpia: al reintentar se manda la misma y, si el pedido
+        // llegó a crearse, el servidor devuelve ese en vez de crear otro.
+        setNotice({ kind: 'error', message: NETWORK_ERROR_MESSAGE });
+        break;
+      case 'server-error':
+        setNotice({ kind: 'error', message: SERVER_ERROR_MESSAGE });
+        break;
+    }
+  }
+
+  function handleCheckoutSuccess(
+    order: CheckoutResponse,
+    waTab: Window | null,
+    buildWhatsappLink: typeof buildOrderWhatsappUrl,
+  ) {
+    // El pedido quedó registrado: el próximo checkout es otra compra.
+    checkoutKeyRef.current = null;
+
+    // Ítems como los calculó el servidor. Si por algún motivo no vienen, el carrito.
+    const orderItems: OrderItem[] = order.items.length > 0
+      ? order.items
+      : items.map(({ id, name, unitPrice, quantity, unit }) => ({ id, name, price: unitPrice, quantity, unit }));
+    const finalOrder: CheckoutResponse = { ...order, items: orderItems };
+    const hasWeight = orderItems.some((item) => isWeightUnit(item.unit));
+    const isDeliveryOrder = finalOrder.deliveryMethod === 'delivery';
+    const customerAddress = isDeliveryOrder ? form.values.customerAddress.trim() : null;
+    // Cuándo está listo un retiro ("mañana desde las 8:00"), con la hora en que
+    // el SERVIDOR creó el pedido: es la misma que usa el panel para decidir si
+    // se arma hoy o mañana (y en un reintento, la del pedido original). Solo si
+    // una respuesta vieja no la trae se usa el reloj del celular corregido.
+    const orderTime = finalOrder.createdAt ? new Date(finalOrder.createdAt) : correctedNow();
+    const pickupReady = isDeliveryOrder ? null : describePickupReady(orderTime);
+    const { priceDrops } = finalOrder;
+
+    const whatsappUrl = buildWhatsappLink(finalOrder.whatsappNumber || storeInfo.whatsappNumber, {
+      orderId: finalOrder.orderId,
+      storeName: finalOrder.storeName || storeInfo.storeName,
+      customerName: form.values.customerName,
+      items: orderItems,
+      subtotal: finalOrder.subtotal,
+      shippingCost: finalOrder.shippingCost,
+      total: finalOrder.total,
+      deliveryMethod: finalOrder.deliveryMethod,
+      customerAddress,
+      deliverySlotId: finalOrder.deliverySlot?.id ?? null,
+      deliverySlotLabel: finalOrder.deliverySlot?.label ?? null,
+      pickupReady,
+      paymentMethod: finalOrder.paymentMethod,
+      replacementPolicy: form.values.replacementPolicy,
+      notes: form.values.notes,
+    });
+
+    // Para "repetir último pedido" y para no volver a tipear los datos.
+    cart.saveLastOrder(orderItems.map(({ id, quantity }) => ({ id, quantity })));
+    form.rememberAndReset();
+    slots.clearSelection();
+
+    // Si algo bajó de precio, el catálogo en memoria pasa a mostrar el precio
+    // con el que se cobró (la confirmación lo avisa).
+    if (priceDrops.length > 0) {
+      setProducts((current) => applyPriceChanges(current, priceDrops, orderTime));
+    }
+
+    setConfirmation({ order: finalOrder, whatsappUrl, hasWeightItems: hasWeight, customerAddress, pickupReady });
+    setCheckoutStep('cart');
+    cart.clearCart();
+
+    if (waTab) {
+      waTab.location.href = whatsappUrl;
+    } else {
+      // Si el navegador bloqueó la pestaña, queda el botón en la confirmación.
+      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
+    if (items.length === 0 || totals.belowDeliveryMinimum || items.some((item) => !item.available)) return;
+
+    // Validación rápida en el navegador; el servidor vuelve a validar todo.
+    const invalidField = form.validateAll();
+    if (invalidField) {
+      focusCheckoutField(invalidField);
       return;
     }
 
-    // El menú se cierra con una transición; se espera un toque para que el
-    // scroll no compita con ella.
-    window.setTimeout(() => {
-      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 80);
-  }
+    setNotice(null);
+    // La pestaña de WhatsApp se abre ACÁ, en el mismo gesto del toque y antes de
+    // cualquier await (después el navegador la bloquearía como popup).
+    const waTab = openBlankTab();
 
-  useEffect(() => {
-    // Se refresca igual en el cliente para tomar cambios de precio recientes,
-    // pero si falla nos quedamos con los productos que vinieron del servidor.
-    async function fetchProducts() {
-      try {
-        const response = await fetch('/api/products');
-        if (!response.ok) throw new Error('No se pudieron cargar los productos.');
-        const freshProducts = await response.json();
-        if (Array.isArray(freshProducts) && freshProducts.length > 0) {
-          setProducts(freshProducts);
-        }
-      } catch (error) {
-        console.error('Error fetching products:', error);
-      }
-    }
-
-    async function fetchStoreInfo() {
-      try {
-        const response = await fetch('/api/store-info');
-        if (response.ok) {
-          setStoreInfo(await response.json());
-        }
-      } catch (error) {
-        console.error('Error fetching store info:', error);
-      }
-    }
-
-    void fetchProducts();
-    void fetchStoreInfo();
-  }, []);
-
-  const cartCount = useMemo(() => cart.length, [cart]);
-  const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
-  const belowDeliveryMinimum = isDelivery && cartTotal < storeInfo.deliveryMinPurchase;
-  const hasFreeShipping = cartTotal >= storeInfo.deliveryFreeThreshold;
-  const missingForFreeShipping = Math.max(0, storeInfo.deliveryFreeThreshold - cartTotal);
-
-  function addToCart(productId: number, quantityToAdd?: number) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-    // Nada sin stock entra al carrito. El servidor lo vuelve a chequear igual.
-    if (!product.available) return;
-
-    const quantity = quantityToAdd ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-
-    setCart((currentCart) => {
-      const nextCart = [...currentCart];
-      const itemIndex = nextCart.findIndex((item) => item.id === productId);
-      if (itemIndex >= 0) {
-        nextCart[itemIndex] = {
-          ...nextCart[itemIndex],
-          quantity: normalizeProductQuantity(nextCart[itemIndex].quantity + quantity, product.unit),
-        };
-      } else {
-        nextCart.push({ ...product, quantity });
-      }
-      return nextCart;
-    });
-
-    setToastMessage(`${product.name} agregado al carrito`);
-  }
-
-  function getGridQuantity(product: Product) {
-    return gridQuantities[product.id] ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-  }
-
-  function adjustGridSelection(productId: number, direction: 1 | -1) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-    const step = PRODUCT_CART_STEP[product.unit];
-
-    setGridQuantities((current) => {
-      const currentQuantity = current[productId] ?? PRODUCT_DEFAULT_CART_QUANTITY[product.unit];
-      const nextQuantity = normalizeProductQuantity(currentQuantity + direction * step, product.unit);
-      if (nextQuantity < step) return current;
-      return { ...current, [productId]: nextQuantity };
-    });
-  }
-
-  function addSelectedToCart(productId: number) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
-    addToCart(productId, getGridQuantity(product));
-  }
-
-  function updateCartQuantityInUnit(productId: number, displayValue: number, displayUnit: ProductUnit) {
-    setCart((currentCart) => currentCart.map((item) => {
-      if (item.id !== productId) return item;
-      // Si el usuario resta hasta 0 (o escribe 0 a mano), no se saca el producto del
-      // carrito solo: puede ser un missclick y tendría que buscarlo de nuevo. Se clampea
-      // a la cantidad mínima; para sacarlo de verdad está el botón de la ×.
-      const normalizedDisplay = displayValue <= 0
-        ? PRODUCT_CART_STEP[displayUnit]
-        : normalizeProductQuantity(displayValue, displayUnit);
-      const nativeQuantity = displayUnit === item.unit
-        ? normalizedDisplay
-        : item.unit === 'kg' ? normalizedDisplay / 1000 : normalizedDisplay * 1000;
-      return { ...item, quantity: Number(nativeQuantity.toFixed(3)) };
-    }));
-  }
-
-  function removeFromCart(productId: number) {
-    setCart((currentCart) => currentCart.filter((item) => item.id !== productId));
-    setUnitModes((current) => {
-      if (!(productId in current)) return current;
-      const next = { ...current };
-      delete next[productId];
-      return next;
-    });
-  }
-
-  const filteredProducts = useMemo(() => {
-    const byCategory = activeCategory === 'Todas'
-      ? products
-      : products.filter((product) => product.category === activeCategory);
-    if (!searchQuery.trim()) return byCategory;
-    return byCategory.filter((product) => matchesSearch(product.name, searchQuery));
-  }, [products, searchQuery, activeCategory]);
-
-  const isSearching = searchQuery.trim().length > 0;
-  const visibleProducts = isSearching || showAllProducts
-    ? filteredProducts
-    : filteredProducts.slice(0, INITIAL_VISIBLE_PRODUCTS);
-  const hasMoreProducts = !isSearching && !showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS;
-
-  const relatedProducts = useMemo(() => {
-    if (cart.length === 0) return [];
-    const cartIds = new Set(cart.map((item) => item.id));
-    // No se recomienda lo que no se puede comprar.
-    return products.filter((product) => !cartIds.has(product.id) && product.available).slice(0, 4);
-  }, [products, cart]);
-
-  function buildWhatsappMessage(items: OrderItem[], orderId: number, total: number, isDelivery: boolean, totalWeight: number) {
-    const lines = items.map((item) => {
-      const quantityText = item.unit === 'unidad' ? `${item.quantity}x` : `${item.quantity}${item.unit}x`;
-      return `- ${quantityText} ${item.name}: $${(item.price * item.quantity).toFixed(2)}`;
-    }).join('\n');
-
-    const maxWeight = storeInfo.deliveryMaxWeightKg;
-    const deliveryText = isDelivery
-      ? `Quiero que me lo envíen por ${storeInfo.deliveryProviderName}.`
-      : 'Quiero retirarlo en el local.';
-    const deliveryWarning = isDelivery && totalWeight > maxWeight
-      ? `\n⚠️ Nota: el pedido pesa más de ${maxWeight}kg, tené en cuenta que para ${storeInfo.deliveryProviderName} el máximo suele ser ${maxWeight}-${maxWeight + 1}kg.`
-      : '';
-    const freeShippingNote = isDelivery && total >= storeInfo.deliveryFreeThreshold
-      ? `\n🚚 El pedido supera los ${formatArs(storeInfo.deliveryFreeThreshold)}, así que el envío es gratis.`
-      : '';
-
-    const text =
-      `Hola! Quiero hacer el pedido #${orderId} de ${storeInfo.storeName}.\n\n` +
-      `${lines}\n\n` +
-      `Total: $${total.toFixed(2)}\n\n` +
-      `Entrega: ${deliveryText}${deliveryWarning}${freeShippingNote}\n\n` +
-      '¡Te envío el comprobante de la transferencia!';
-    return `https://wa.me/${storeInfo.whatsappNumber}?text=${encodeURIComponent(text)}`;
-  }
-
-  async function handleCheckout() {
-    if (cart.length === 0) return;
-    // Primera barrera contra el doble toque: mientras hay un pedido en curso no
-    // se dispara otro. La segunda barrera (la que realmente garantiza que no se
-    // dupliquen) es la clave de idempotencia que valida el servidor.
-    if (isCheckoutLoading) return;
-
-    // La clave se mantiene entre reintentos del MISMO intento de compra y se
-    // renueva recién cuando el pedido sale bien. Así, si el cliente toca dos
-    // veces o se le corta la conexión y reintenta, el servidor reconoce que es
-    // el mismo pedido y no crea uno nuevo.
-    if (!checkoutKeyRef.current) {
-      checkoutKeyRef.current = crypto.randomUUID();
-    }
-
-    setIsCheckoutLoading(true);
-
-    // Se abre una pestaña en blanco de forma síncrona (dentro del gesto del click)
-    // para evitar que el navegador bloquee el popup al redirigirla después del fetch.
-    // Con tarjeta redirigimos la pestaña actual a Mercado Pago, así que no hace falta.
-    const isCardPayment = paymentMethod === 'mercadopago';
-    const waTab = isCardPayment ? null : window.open('', '_blank');
-
+    submittingRef.current = true;
+    setIsSubmitting(true);
     try {
-      const response = await fetch('/api/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cart: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
-          isDelivery,
-          paymentMethod,
-          idempotencyKey: checkoutKeyRef.current,
-        }),
+      // El formulario vive en el chunk del carrito, así que ya está cargado:
+      // esto no agrega ningún viaje de red.
+      const checkout = await loadCartChunk();
+      if (!checkoutKeyRef.current) checkoutKeyRef.current = checkout.createIdempotencyKey();
+      const idempotencyKey = checkoutKeyRef.current;
+
+      const outcome = await checkout.postCheckout({
+        cart: items.map((item) => ({ id: item.id, quantity: item.quantity, price: item.unitPrice })),
+        deliveryMethod: form.deliveryMethod,
+        deliverySlot: form.isDelivery ? slots.selectedSlot?.id ?? null : null,
+        paymentMethod: form.paymentMethod,
+        customer: form.values,
+        idempotencyKey,
       });
 
-      const result = await response.json();
-      if (!response.ok) {
+      if (outcome.kind === 'ok') {
+        handleCheckoutSuccess(outcome.data, waTab, checkout.buildOrderWhatsappUrl);
+      } else {
         waTab?.close();
-        alert(result.error || 'Hubo un problema al procesar el pedido.');
-        return;
+        handleCheckoutFailure(outcome);
       }
-
-      // El pedido quedó registrado: el próximo checkout es una compra distinta y
-      // necesita una clave nueva.
-      checkoutKeyRef.current = null;
-
-      // Pago con tarjeta: el cliente sigue en Mercado Pago y vuelve por back_urls.
-      if (isCardPayment) {
-        if (result.checkoutUrl) {
-          setCart([]);
-          window.location.href = result.checkoutUrl;
-          return;
-        }
-        alert('No pudimos generar el link de pago. Podés pagar por transferencia.');
-      }
-
-      const items = cart.map(({ id, name, price, quantity, unit }) => ({ id, name, price, quantity, unit }));
-      const waLink = buildWhatsappMessage(items, result.orderId, result.total, isDelivery, totalWeight);
-      setOrderConfirmation({ ...result, items, whatsappUrl: waLink });
-
-      if (waTab) {
-        waTab.location.href = waLink;
-      } else if (!isCardPayment) {
-        window.open(waLink, '_blank', 'noopener,noreferrer');
-      }
-
-      setCart([]);
     } catch (error) {
-      waTab?.close();
+      // No debería pasar (postCheckout no lanza), pero si pasa, que no quede colgado.
       console.error('Error en el checkout:', error);
-      // La clave NO se limpia acá a propósito: si el cliente reintenta, se manda
-      // la misma y el servidor devuelve el pedido que quizás sí llegó a crearse.
-      alert('No se pudo registrar el pedido. Inténtalo de nuevo.');
+      waTab?.close();
+      setNotice({ kind: 'error', message: SERVER_ERROR_MESSAGE });
     } finally {
-      setIsCheckoutLoading(false);
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
   }
 
   return (
     <>
-      {/* El nav va FUERA del <header> a propósito: position:sticky solo funciona
-          dentro del contenedor del elemento, y el header es position:relative, así
-          que al pasarlo la barra se iba con él. Como hermano del header, su
-          contenedor es el body y queda fija en toda la página. */}
-      <nav className="app-nav" aria-label="Menú principal">
-          <div className="container app-nav-inner">
-            <button
-              type="button"
-              className={`menu-toggle ${isMenuOpen ? 'open' : ''}`}
-              onClick={() => setIsMenuOpen((open) => !open)}
-              aria-expanded={isMenuOpen}
-              aria-controls="menu-principal"
-              aria-label={isMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
-            >
-              {/* Tres barras que se transforman en una X al abrir. */}
-              <span className="menu-bar" />
-              <span className="menu-bar" />
-              <span className="menu-bar" />
-            </button>
-            <span className="app-nav-title">El Pampa</span>
-          </div>
-
-          <div id="menu-principal" className={`app-menu ${isMenuOpen ? 'open' : ''}`}>
-            <div className="container app-menu-items">
-              <button type="button" onClick={() => goToSection('inicio')}>
-                <i className="fa-solid fa-house" /> Inicio
-              </button>
-              <button type="button" onClick={() => goToSection('productos')}>
-                <i className="fa-solid fa-carrot" /> Productos
-              </button>
-              <button type="button" onClick={() => goToSection('ubicacion')}>
-                <i className="fa-solid fa-location-dot" /> Ubicación
-              </button>
-              <button type="button" onClick={() => goToSection('informacion')}>
-                <i className="fa-solid fa-circle-info" /> Información
-              </button>
-              <a
-                href={`https://wa.me/${storeInfo.whatsappNumber}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                <i className="fa-brands fa-whatsapp" /> WhatsApp
-              </a>
-              {storeInfo.instagramUrl ? (
-                <a
-                  href={storeInfo.instagramUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  <i className="fa-brands fa-instagram" /> Instagram
-                </a>
-              ) : null}
-            </div>
-          </div>
-      </nav>
-
-      <header>
-        <div className="container">
-          <div className="hero-text">
-            <h1><i className="fa-solid fa-carrot" />El Pampa</h1>
-            <svg className="hero-underline" viewBox="0 0 260 14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M2 9 C 40 2, 80 13, 120 7 S 200 1, 258 8" stroke="#C98A3E" strokeWidth="3" fill="none" strokeLinecap="round" />
-            </svg>
-            <p className="hero-tagline">Verdulería y frutería en Barrio General Paz, Córdoba Capital. Pedí por kilo, gramos o unidad y coordinamos retiro o envío.</p>
-            <p className="hero-shipping-badge">
-              <i className="fa-solid fa-truck-fast" /> Envío gratis en pedidos desde {formatArs(storeInfo.deliveryFreeThreshold)}
-            </p>
-          </div>
-          <button type="button" className="cart-icon" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
-            <i className="fa-solid fa-cart-shopping" />
-            <span id="cart-count">{cartCount}</span>
-          </button>
-        </div>
-        <svg className="header-edge" viewBox="0 0 1200 26" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0,0 L0,14 L30,22 L60,10 L90,20 L120,8 L150,18 L180,6 L210,16 L240,4 L270,14 L300,22 L330,10 L360,20 L390,8 L420,18 L450,6 L480,16 L510,4 L540,14 L570,22 L600,10 L630,20 L660,8 L690,18 L720,6 L750,16 L780,4 L810,14 L840,22 L870,10 L900,20 L930,8 L960,18 L990,6 L1020,16 L1050,4 L1080,14 L1110,22 L1140,10 L1170,20 L1200,8 L1200,26 L0,26 Z" fill="#FAF6EC" />
-        </svg>
-      </header>
+      <SiteNav storeInfo={storeInfo} />
+      <Hero
+        storeInfo={storeInfo}
+        heading={heading}
+        cartCount={items.length}
+        onOpenCart={openCart}
+        onCartIntent={preloadCart}
+      />
 
       <main className="container">
-        <h2 id="productos"><i className="fa-solid fa-leaf" /> Nuestros Productos</h2>
-        <p className="section-subtitle">Productos por kilo, gramos o unidad, listos para pedir online.</p>
+        <StoreRules storeInfo={storeInfo} nextSlot={slots.nextSlot} />
 
-        <div className="search-bar">
-          <i className="fa-solid fa-magnifying-glass" />
-          <input
-            type="search"
-            placeholder="Buscar productos..."
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            aria-label="Buscar productos"
+        {/* Sale de localStorage (después de montar): va flotando junto al botón
+            del carrito (position: fixed) para no empujar la página al aparecer. */}
+        {cart.lastOrderLines.length > 0 && items.length === 0 ? (
+          <button
+            type="button"
+            className="repeat-order-btn repeat-order-chip"
+            onClick={handleRepeatLastOrder}
+            onPointerEnter={preloadCart}
+            onPointerDown={preloadCart}
+            onFocus={preloadCart}
+          >
+            <RotateCw size={18} aria-hidden="true" /> Repetir mi último pedido
+          </button>
+        ) : null}
+
+        {showBolsonesSection ? (
+          <BolsonesSection
+            products={bolsones}
+            pricing={pricing}
+            now={now}
+            gridQuantities={gridQuantities}
+            inCart={cart.quantitiesById}
+            onAdjust={handleAdjustGrid}
+            onAdd={handleAdd}
           />
-        </div>
+        ) : null}
 
-        <div className="category-filters">
-          {CATEGORY_FILTERS.map((category) => (
-            <button
-              key={category}
-              type="button"
-              className={`category-filter-btn ${activeCategory === category ? 'active' : ''}`}
-              onClick={() => setActiveCategory(category)}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
-
-        {filteredProducts.length === 0 ? (
-          <p className="no-results">
-            {isSearching
-              ? `No encontramos productos con "${searchQuery}".`
-              : `No hay productos en "${activeCategory}" por ahora.`}
+        <section className="catalog-section" aria-labelledby="productos">
+          <h2 id="productos">
+            <Leaf size={30} aria-hidden="true" /> Nuestros productos
+          </h2>
+          <p className="section-subtitle">
+            Frutas, verduras, bolsones y almacén. Elegí la cantidad y sumalo al carrito: no hace falta registrarse.
           </p>
-        ) : (
-          <div className="product-grid">
-            {visibleProducts.map((product) => {
-              const selectedQuantity = getGridQuantity(product);
-              const step = PRODUCT_CART_STEP[product.unit];
-              return (
-                <div className={`product-card ${product.available ? '' : 'product-card-unavailable'}`} key={product.id}>
-                  <div className="product-card-image">
-                    <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                    <span className="price-tag">${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</span>
-                    {product.available ? null : <span className="unavailable-overlay">Sin stock</span>}
-                  </div>
-                  <div className="product-info">
-                    <h3>{product.name}</h3>
-                    {product.available ? (
-                      <p className="availability-note available">
-                        <span className="status-dot" aria-hidden="true" />
-                        Disponible
-                      </p>
-                    ) : (
-                      <p className="availability-note unavailable">
-                        <span className="status-dot" aria-hidden="true" />
-                        No disponible por ahora
-                      </p>
-                    )}
-                    <p className="stock-note">Se vende por {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                    {product.available ? (
-                      <>
-                        <div className="grid-qty-controls">
-                          <button type="button" disabled={selectedQuantity <= step} onClick={() => adjustGridSelection(product.id, -1)} aria-label={`Restar cantidad de ${product.name}`}>-</button>
-                          <span>{formatProductQuantity(selectedQuantity, product.unit)}</span>
-                          <button type="button" onClick={() => adjustGridSelection(product.id, 1)} aria-label={`Sumar cantidad de ${product.name}`}>+</button>
-                        </div>
-                        <button className="add-to-cart-btn" onClick={() => addSelectedToCart(product.id)}>
-                          <i className="fa-solid fa-cart-plus" /> Añadir al carrito
-                        </button>
-                      </>
-                    ) : (
-                      <button className="add-to-cart-btn" disabled>
-                        Sin stock por ahora
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
-        {hasMoreProducts ? (
-          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
-            Ver todos los productos ({filteredProducts.length})
-          </button>
-        ) : null}
+          <CatalogFilters
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            categories={visibleCategories}
+            activeCategory={activeCategory}
+            onCategoryChange={handleCategoryChange}
+          />
 
-        {!isSearching && showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
-          <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
-            Ver menos
-          </button>
-        ) : null}
-
-        <section className="contact-section" id="ubicacion">
-          <div className="contact-heading">
-            <h2 style={{ marginTop: 0 }}><i className="fa-solid fa-store" /> Dónde estamos</h2>
-            {storeStatus ? (
-              <span className={`store-status-badge ${storeStatus.open ? 'open' : 'closed'}`}>
-                <span className="status-dot" aria-hidden="true" />
-                {storeStatus.open ? 'Abierto ahora' : 'Cerrado ahora'}
-              </span>
-            ) : null}
-          </div>
-          <div className="contact-info">
-            <p>
-              <i className="fa-solid fa-location-dot" />{' '}
-              <a href={MAP_DIRECTIONS_URL} target="_blank" rel="noopener noreferrer">{storeInfo.storeAddress}</a>
+          {filteredProducts.length === 0 ? (
+            <p className="no-results">
+              {isSearching
+                ? `No encontramos productos con "${query}".`
+                : activeCategory === 'Ofertas'
+                  ? 'No hay ofertas vigentes por ahora. ¡Volvé a fijarte en unos días!'
+                  : `No hay productos en "${activeCategory}" por ahora.`}
             </p>
-            <p><i className="fa-brands fa-whatsapp" /> <a href={`https://wa.me/${storeInfo.whatsappNumber}`} target="_blank" rel="noopener noreferrer">WhatsApp: 3517656500</a></p>
-            <p><i className="fa-solid fa-envelope" /> <a href="mailto:gastaldo50@gmail.com">gastaldo50@gmail.com</a></p>
-            <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.weekday}</p>
-            <p><i className="fa-solid fa-clock" /> {storeInfo.storeHours.sunday}</p>
-            <p className="order-cutoff-note">
-              <i className="fa-solid fa-triangle-exclamation" />{' '}
-              {storeStatus?.pastCutoff
-                ? 'Ya pasaron las 19:00, así que los pedidos de hoy se toman en cuenta recién mañana.'
-                : 'Los pedidos hechos después de las 19:00 se toman en cuenta a partir del día siguiente.'}
-            </p>
-          </div>
-
-          <div className="map-container">
-            <iframe
-              src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d4211.8315560727915!2d-64.16876892364488!3d-31.41596097426193!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x9432a2a385140651%3A0xc7a2b6dd6ae27bd!2sEl%20Pampa!5e1!3m2!1ses!2sar!4v1785775498093!5m2!1ses!2sar"
-              width="600"
-              height="450"
-              style={{ border: 0 }}
-              allowFullScreen
-              loading="lazy"
-              referrerPolicy="strict-origin-when-cross-origin"
-              title="Ubicación de la verdulería"
+          ) : (
+            <ProductGrid
+              products={filteredProducts}
+              collapseAfter={collapseAfter}
+              pricing={pricing}
+              now={now}
+              gridQuantities={gridQuantities}
+              inCart={cart.quantitiesById}
+              imageOffset={showBolsonesSection ? bolsones.length : 0}
+              onAdjust={handleAdjustGrid}
+              onAdd={handleAdd}
             />
-          </div>
+          )}
+
+          {hasMoreProducts ? (
+            <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(true)}>
+              Ver todos los productos ({filteredProducts.length})
+            </button>
+          ) : null}
+
+          {!isSearching && showAllProducts && filteredProducts.length > INITIAL_VISIBLE_PRODUCTS ? (
+            <button type="button" className="show-more-btn" onClick={() => setShowAllProducts(false)}>
+              Ver menos
+            </button>
+          ) : null}
         </section>
+
+        <ContactSection storeInfo={storeInfo} storeStatus={storeStatus} />
 
         {infoSection}
       </main>
 
-      <div className={`cart-drawer-overlay ${isCartOpen ? 'open' : ''}`} onClick={() => setIsCartOpen(false)}>
-        <aside className="cart-drawer" onClick={(event) => event.stopPropagation()}>
-          <div className="cart-drawer-header">
-            <h2><i className="fa-solid fa-cart-shopping" /> Tu carrito</h2>
-            <button type="button" className="cart-drawer-close" onClick={() => setIsCartOpen(false)} aria-label="Cerrar carrito">&times;</button>
-          </div>
-
-          {orderConfirmation ? (
-            <div className="cart-drawer-body">
-              <div className="order-confirmation">
-                <h3>¡Pedido #{orderConfirmation.orderId} registrado!</h3>
-                <p>Transferí <strong>${orderConfirmation.total.toFixed(2)}</strong> a:</p>
-                <ul className="transfer-details">
-                  <li><strong>Alias:</strong> {orderConfirmation.transferAlias}</li>
-                  {orderConfirmation.transferCbu ? <li><strong>CBU:</strong> {orderConfirmation.transferCbu}</li> : null}
-                </ul>
-                <p>Ya te abrimos WhatsApp con el detalle del pedido. Cuando hagas la transferencia, mandanos el comprobante por ahí.</p>
-                <a className="whatsapp-btn" href={orderConfirmation.whatsappUrl} target="_blank" rel="noopener noreferrer">
-                  <i className="fa-brands fa-whatsapp" /> Reenviar pedido por WhatsApp
-                </a>
-                <button type="button" className="continue-shopping-btn" onClick={() => { setOrderConfirmation(null); setIsCartOpen(false); }}>
-                  ¿Querés hacer otro pedido? Seguir comprando
-                </button>
-              </div>
-            </div>
-          ) : (
-          <>
-          <div className="cart-drawer-body">
-            {cart.length === 0 ? (
-              <p>Tu carrito está vacío.</p>
-            ) : (
-              cart.map((item) => {
-                const displayUnit = item.unit === 'unidad' ? 'unidad' : (unitModes[item.id] ?? item.unit);
-                const displayQuantity = displayUnit === item.unit
-                  ? item.quantity
-                  : item.unit === 'kg' ? item.quantity * 1000 : item.quantity / 1000;
-                const step = PRODUCT_CART_STEP[displayUnit];
-
-                return (
-                  <div className="cart-drawer-item" key={item.id}>
-                    <button className="remove-from-cart-btn" onClick={() => removeFromCart(item.id)} title="Sacar producto">&times;</button>
-                    <div className="cart-item-info">
-                      <img src={item.image || PLACEHOLDER_IMAGE} alt={item.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                      <div>
-                        <strong>{item.name}</strong>
-                        <p>${item.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[item.unit]} — ${(item.price * item.quantity).toFixed(2)}</p>
-                      </div>
-                    </div>
-
-                    <div className="cart-item-controls">
-                      {item.unit !== 'unidad' ? (
-                        <div className="unit-toggle">
-                          <button type="button" className={displayUnit === 'kg' ? 'active' : ''} onClick={() => setUnitModes((current) => ({ ...current, [item.id]: 'kg' }))}>kg</button>
-                          <button type="button" className={displayUnit === 'g' ? 'active' : ''} onClick={() => setUnitModes((current) => ({ ...current, [item.id]: 'g' }))}>g</button>
-                        </div>
-                      ) : null}
-                      <div className="qty-controls">
-                        <button type="button" onClick={() => updateCartQuantityInUnit(item.id, displayQuantity - step, displayUnit)}>-</button>
-                        <input
-                          type="number"
-                          min={step}
-                          step={step}
-                          value={displayQuantity}
-                          onChange={(event) => updateCartQuantityInUnit(item.id, Number(event.target.value), displayUnit)}
-                        />
-                        <button type="button" onClick={() => updateCartQuantityInUnit(item.id, displayQuantity + step, displayUnit)}>+</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-
-            {relatedProducts.length > 0 ? (
-              <div className="related-products">
-                <h3>También te puede interesar</h3>
-                <div className="related-products-list">
-                  {relatedProducts.map((product) => (
-                    <div className="related-product-card" key={product.id}>
-                      <img src={product.image || PLACEHOLDER_IMAGE} alt={product.name} onError={(event) => { event.currentTarget.src = PLACEHOLDER_IMAGE; }} />
-                      <div>
-                        <strong>{product.name}</strong>
-                        <p>${product.price.toFixed(2)} / {PRODUCT_UNIT_LABELS[product.unit]}</p>
-                      </div>
-                      <button type="button" onClick={() => addToCart(product.id)}>+ Agregar</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="cart-drawer-footer">
-            <div className="delivery-toggle">
-              <button type="button" className={!isDelivery ? 'active' : ''} onClick={() => setIsDelivery(false)}>Retiro en el local</button>
-              <button type="button" className={isDelivery ? 'active' : ''} onClick={() => setIsDelivery(true)}>Envío ({storeInfo.deliveryProviderName})</button>
-            </div>
-            <div className="delivery-notice">
-              <i className="fa-solid fa-triangle-exclamation" />
-              <span>Los precios y tiempos de envío están sujetos a variación, ya que las entregas se realizan mediante {storeInfo.deliveryProviderName}.</span>
-            </div>
-            {belowDeliveryMinimum ? (
-              <div className="delivery-notice delivery-notice-warning">
-                <i className="fa-solid fa-circle-exclamation" />
-                <span>Para envío el pedido mínimo es {formatArs(storeInfo.deliveryMinPurchase)} — te faltan {formatArs(storeInfo.deliveryMinPurchase - cartTotal)}, o elegí retiro en el local.</span>
-              </div>
-            ) : null}
-            {isDelivery && !belowDeliveryMinimum ? (
-              hasFreeShipping ? (
-                <div className="delivery-notice delivery-notice-free">
-                  <i className="fa-solid fa-truck-fast" />
-                  <span>¡Tenés envío gratis! Tu pedido supera los {formatArs(storeInfo.deliveryFreeThreshold)}.</span>
-                </div>
-              ) : (
-                <div className="delivery-notice">
-                  <i className="fa-solid fa-truck" />
-                  <span>Sumá {formatArs(missingForFreeShipping)} más y el envío te sale gratis (desde {formatArs(storeInfo.deliveryFreeThreshold)}).</span>
-                </div>
-              )
-            ) : null}
-            {storeInfo.mercadoPagoEnabled ? (
-              <div className="payment-toggle">
-                <button type="button" className={paymentMethod === 'transfer' ? 'active' : ''} onClick={() => setPaymentMethod('transfer')}>
-                  <i className="fa-solid fa-building-columns" /> Transferencia
-                </button>
-                <button type="button" className={paymentMethod === 'mercadopago' ? 'active' : ''} onClick={() => setPaymentMethod('mercadopago')}>
-                  <i className="fa-solid fa-credit-card" /> Tarjeta / Mercado Pago
-                </button>
-              </div>
-            ) : null}
-            <div className="cart-total">Total: $<span>{cartTotal.toFixed(2)}</span></div>
-            <button
-              className="checkout-btn"
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || belowDeliveryMinimum || isCheckoutLoading}
-            >
-              {isCheckoutLoading
-                ? 'Procesando...'
-                : paymentMethod === 'mercadopago' ? 'Pagar con Mercado Pago' : 'Pedir por transferencia'}
-            </button>
-          </div>
-          </>
-          )}
-        </aside>
-      </div>
-
-      <button type="button" className={`cart-fab ${cartCount > 0 ? 'has-items' : ''}`} onClick={() => setIsCartOpen(true)} aria-label="Abrir carrito">
-        <i className="fa-solid fa-cart-shopping" />
-        {cartCount > 0 ? (
-          <>
-            <span className="cart-fab-summary">
-              <span className="cart-fab-count-text">{cartCount} {cartCount === 1 ? 'producto' : 'productos'}</span>
-              <span className="cart-fab-total">${cartTotal.toFixed(2)}</span>
-            </span>
-            <i className="fa-solid fa-chevron-up cart-fab-chevron" />
-          </>
-        ) : null}
-      </button>
-
-      {toastMessage ? (
-        <div className="toast" role="status">
-          <i className="fa-solid fa-circle-check" /> {toastMessage}
-        </div>
+      {drawerRequested || isCartOpen ? (
+        <CartDrawer
+          isOpen={isCartOpen}
+          onClose={closeCart}
+          step={checkoutStep}
+          onStepChange={setCheckoutStep}
+          storeInfo={storeInfo}
+          items={items}
+          totals={totals}
+          hasWeightItems={hasWeightItems}
+          totalWeightKg={totalWeightKg}
+          form={form}
+          slots={slots}
+          pricing={pricing}
+          suggestedBolson={suggestedBolson}
+          relatedProducts={relatedProducts}
+          onAddSuggestion={handleAddSuggestion}
+          onSetQuantity={cart.setQuantity}
+          onRemove={cart.removeFromCart}
+          hasLastOrder={cart.lastOrderLines.length > 0}
+          onRepeatLastOrder={handleRepeatLastOrder}
+          notice={notice}
+          isSubmitting={isSubmitting}
+          onSubmit={handleSubmit}
+          confirmation={confirmation}
+          onFinishConfirmation={handleFinishConfirmation}
+          imagesById={imagesById}
+        />
       ) : null}
 
-      <footer>
-        <div className="container">
-          <p>&copy; 2026 El Pampa. Verdulería y frutería en Barrio General Paz, Córdoba Capital.</p>
-          <div className="footer-links">
-            <Link href="/terminos">Términos y Condiciones</Link>
-            <Link href="/privacidad">Política de Privacidad</Link>
-          </div>
-        </div>
-      </footer>
+      <CartFab count={items.length} subtotal={totals.subtotal} onOpen={openCart} onIntent={preloadCart} />
+
+      <Toast toast={toast} overCart={isCartOpen} />
+
+      <SiteFooter storeInfo={storeInfo} year={getArgentinaParts(renderNow).date.slice(0, 4)} />
     </>
   );
 }

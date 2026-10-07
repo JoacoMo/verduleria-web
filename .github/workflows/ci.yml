@@ -1,0 +1,162 @@
+# Integración continua de El Pampa.
+#
+# Qué corre y en qué orden (lo barato primero, para fallar rápido):
+#   1. Tipos (tsc), lint (ESLint 9 + reglas de Next) y tests unitarios (Vitest).
+#   2. Tests de integración: los route handlers contra un Postgres 16 real con
+#      las migraciones de prisma/migrations aplicadas (las mismas de producción).
+#   3. next build con variables de prueba y control de que ningún secreto ni
+#      nombre de variable de servidor terminó en el bundle del navegador.
+#   4. npm audit de las dependencias de producción.
+#   5. Aparte, los tests del script de precios en Python.
+#
+# Sin formateo con Prettier: el repo no lo usa (no hay config ni dependencia) y
+# formatear todo de golpe ensuciaría el historial y el blame. El lint cubre el
+# estilo básico y los errores reales (hooks, imports, tipos).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App (tipos, lint, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # La base de integración la crea el servicio.
+          POSTGRES_DB: elpampa_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/elpampa_test
+      # Variables de PRUEBA para el build y para check:bundle. Tienen que ser las
+      # mismas en los dos pasos: check:bundle busca estos valores en el bundle
+      # del navegador. Ninguna es real. (Los tests usan las suyas: ver
+      # tests/vitest.shared.ts.) La base es la del servicio, así el sitemap y
+      # llms.txt se pueden prerenderizar en el build.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/elpampa_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/elpampa_test
+      JWT_SECRET: ci-jwt-secret-de-prueba-0123456789-abcdefghij
+      ADMIN_USERNAME: ci-admin-de-prueba
+      ADMIN_PASSWORD: ci-clave-de-prueba-0123456789
+      ADMIN_TOKEN_VERSION: ci-version-1
+      CRON_SECRET: ci-cron-secret-de-prueba-0123456789
+      SUPABASE_URL: https://ci-proyecto.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-service-role-key-de-prueba-0123456789
+      SUPABASE_STORAGE_BUCKET: product-images
+      SITE_URL: https://elpampa.example
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # La migración de RLS (20260811050000_enable_row_level_security) les
+      # revoca permisos a los roles de la API de Supabase: en un Postgres pelado
+      # no existen y la migración fallaría. Se crean antes de migrar.
+      - name: Roles de Supabase (anon, authenticated)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d elpampa_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+          END
+          $$;
+          SQL
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests unitarios
+        run: npm test
+
+      # Los turnos y horarios se calculan en hora de Córdoba: tienen que dar lo
+      # mismo aunque el servidor esté en otra zona (UTC+14 es el peor caso).
+      - name: Tests unitarios (servidor en otra zona horaria)
+        run: npm test
+        env:
+          TZ: Pacific/Kiritimati
+
+      # La globalSetup corre `prisma migrate deploy` contra TEST_DATABASE_URL,
+      # vacía las tablas y siembra un catálogo conocido.
+      - name: Tests de integración (Postgres 16)
+        run: npm run test:integration
+
+      - name: Build
+        run: npm run build
+
+      - name: Secretos fuera del bundle del navegador
+        run: npm run check:bundle
+
+      # Lo mismo en lo que el servidor arma en cada request (HTML, payload RSC y
+      # respuestas de la API, también las de error): ahí terminaría una prop o un
+      # mensaje con datos de servidor. Levanta `next start` con estas variables.
+      - name: Secretos fuera de las páginas y la API
+        run: npm run check:pages
+
+      - name: Auditoría de dependencias de producción
+        run: npm audit --omit=dev --audit-level=high
+
+  python:
+    name: Script de precios (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Instalar dependencias
+        run: python -m pip install -r scripts/requirements.txt
+
+      - name: Tests
+        run: python -m unittest scripts/test_actualizar_precios.py -v

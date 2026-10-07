@@ -5,15 +5,17 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
+![Vitest](https://img.shields.io/badge/Tests-Vitest-6E9F18?logo=vitest&logoColor=white)
 ![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?logo=vercel&logoColor=white)
 
 **Sitio en producción:** [elpampa.vercel.app](https://elpampa.vercel.app)
 
 Tienda online y panel de administración para **El Pampa**, una verdulería y frutería
 real de Barrio General Paz, Córdoba (Argentina). Los clientes arman el pedido desde el
-celular —por kilo, por gramo o por unidad—, eligen retiro o envío y pagan por
-transferencia o con Mercado Pago. El dueño gestiona catálogo, stock y pedidos desde
-un panel propio.
+celular —por kilo, gramo, unidad, atado o bandeja—, eligen retiro en el local o envío
+en un turno, y pagan por transferencia o en efectivo. El dueño pesa, ajusta el pedido
+con los pesos reales y le manda al cliente el total final por WhatsApp desde un panel
+propio.
 
 No es una maqueta: está en uso, con clientes y pedidos reales. Eso condicionó casi
 todas las decisiones técnicas, y el foco de este README está justamente ahí: **qué
@@ -32,8 +34,10 @@ problema había y por qué se resolvió de esa forma**.
 - [API](#api)
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Correr el proyecto localmente](#correr-el-proyecto-localmente)
+- [Tests y CI](#tests-y-ci)
 - [Variables de entorno](#variables-de-entorno)
 - [Deploy](#deploy)
+- [Script de actualización de precios](#script-de-actualización-de-precios)
 - [Limitaciones conocidas y próximos pasos](#limitaciones-conocidas-y-próximos-pasos)
 
 ---
@@ -47,10 +51,19 @@ La verdulería tomaba pedidos solo por WhatsApp. Eso significaba:
 - Calcular el total a mano, con errores.
 - No tener registro de qué se vendió cada día.
 
+Además, el rubro tiene un problema propio: **el peso real cambia el total**. Nadie
+pesa exactamente 1,5 kg de tomate, así que cobrar online por adelantado obliga a
+devolver diferencias.
+
 El objetivo fue que el cliente pueda **armar y enviar el pedido solo**, con precios
-actualizados y el total calculado, y que el dueño tenga **un lugar donde ver y
-confirmar los pedidos** sin cambiar su forma de trabajar (siguen cerrando el pedido
-por WhatsApp, pero ahora llega completo).
+actualizados y el total calculado, y que el dueño tenga **un lugar donde ver, ajustar y
+confirmar los pedidos** sin cambiar su forma de trabajar: el pedido sigue cerrándose
+por WhatsApp, pero llega completo, y el cobro se hace sobre el peso real.
+
+Antes de esta versión se relevaron 50 verdulerías con venta online en Córdoba y del
+resto del país. El modelo que domina es "catálogo + carrito + cierre por WhatsApp", con
+cobro al entregar o después de armar el pedido, entregas por turnos y pedido mínimo.
+Con eso en mente se sacó Mercado Pago y se sumaron turnos, envío fijo, bolsones y ofertas.
 
 ---
 
@@ -58,28 +71,51 @@ por WhatsApp, pero ahora llega completo).
 
 ### Para el cliente
 
-- **Catálogo con búsqueda y filtro por categoría** (Frutas, Verduras, Almacén, Ofertas).
-- **Cantidades por unidad de venta**: cada producto se vende por `kg`, `g` o `unidad`,
-  con pasos adecuados (de a 250 g para lo que va por kilo, de a 100 g para lo que va por gramo).
-- **Carrito en panel lateral** con cambio de unidad kg/g, ajuste de cantidades y
-  productos sugeridos.
-- **Indicador de disponibilidad** en cada producto; lo que no hay en stock baja al final
-  de la lista y no se puede agregar.
-- **Retiro o envío**, con pedido mínimo para envío y **envío gratis desde $20.000**
-  (el carrito avisa cuánto falta para llegar).
-- **Dos formas de pago**: transferencia (abre WhatsApp con el pedido ya redactado) o
-  Mercado Pago Checkout Pro.
-- **Estado del local en vivo** ("Abierto ahora" / "Cerrado ahora") según los horarios reales.
-- **Menú de navegación fijo** tipo app para saltar a productos, ubicación o información.
-- Mapa, horarios, preguntas frecuentes, términos y política de privacidad.
+- **Catálogo con búsqueda y filtros** (Bolsones, Frutas, Verduras, Almacén, Ofertas) y
+  páginas propias por categoría: [`/bolsones`](https://elpampa.vercel.app/bolsones),
+  [`/ofertas`](https://elpampa.vercel.app/ofertas), `/frutas`, `/verduras` y una
+  página de [`/envios`](https://elpampa.vercel.app/envios).
+- **Bolsones destacados** con la lista de lo que traen, y una sugerencia en el carrito
+  si todavía no sumaste uno.
+- **Ofertas** con precio tachado, porcentaje de descuento y fecha de vencimiento: vencen
+  solas, sin que el dueño tenga que acordarse de sacarlas.
+- **Cantidades por unidad de venta**: `kg`, `g`, `unidad`, `atado` o `bandeja`, con
+  pasos adecuados y precisión de 50 g para lo que va por peso. En el carrito, lo que va
+  por peso se puede ver en kilos o en gramos.
+- **Condiciones a la vista** antes de comprar: retiro gratis, envío de $4.000 (gratis
+  desde $20.000), pedido mínimo para envío, turnos y "próxima entrega: hoy de 19 a 20 h".
+- **Carrito persistente**: sobrevive a cerrar la pestaña, y hay un botón de **repetir
+  el último pedido** (la compra en verdulería es semanal).
+- **Checkout en dos pasos sin cuenta**: datos de contacto con validación en vivo,
+  retiro o envío con **turno de entrega** (13 a 14 h o 19 a 20 h), transferencia o
+  efectivo, qué hacer si falta un producto y aclaraciones.
+- **Total aproximado y total final**: si hay productos por peso, el carrito avisa que el
+  total es aproximado y que el local confirma el exacto por WhatsApp después de pesar.
+- **Sin sorpresas de precio**: si el dueño subió un precio o algo se quedó sin stock
+  mientras el cliente armaba el carrito, el pedido no se registra; el carrito se
+  actualiza y le muestra qué cambió. Si un precio bajó, se cobra el menor y se le avisa.
+- **Retiro con hora clara**: la confirmación dice cuándo está listo ("hoy desde las
+  17:30", "mañana desde las 8:00"), respetando que el domingo se cierra a las 14.
+- **Mensaje de WhatsApp armado** con el detalle del pedido, la entrega y el pago.
+- Estado del local en vivo, mapa, preguntas frecuentes, términos y privacidad.
 
 ### Para el dueño (panel de administración)
 
-- Alta, edición y baja de productos, con **subida de imágenes comprimidas a WebP en el
-  navegador** antes de enviarlas (menos datos móviles y menos almacenamiento).
+- Alta, edición y baja de productos, con **ofertas con vencimiento**, descripción para
+  los bolsones y **subida de imágenes comprimidas a WebP en el navegador**.
 - **Botón de "sin stock" de un toque**, sin entrar a editar el producto.
-- Búsqueda y orden de productos.
-- Pedidos del día con navegación por fecha, y acciones para confirmar pago, cancelar o borrar.
+- **Pedidos del día agrupados por turno** (envíos de 13 a 14 h, de 19 a 20 h, retiros,
+  y los retiros que entraron la noche anterior), con los datos del cliente, el medio de
+  pago y un link directo a su WhatsApp. Un bloque aparte muestra los **pendientes de
+  días anteriores** para que ninguno quede sin resolver.
+- **Ajuste de pesos reales**: se cargan las cantidades pesadas (precisión de 5 g), se
+  recalcula el total con el precio guardado del pedido y queda marcado como "total
+  final". Si el pedido cambió en otro dispositivo mientras se editaba, no se pisa.
+- **"Avisar total final"** (se habilita recién cuando están cargados los pesos) y
+  **"Pedir reseña"**, con mensajes de WhatsApp ya redactados.
+- Resumen del día: cobrado, por cobrar y envíos por turno.
+- **Script de precios** que cruza la lista del Mercado de Abasto con el catálogo y
+  actualiza todo junto (ver [abajo](#script-de-actualización-de-precios)).
 
 ---
 
@@ -89,13 +125,15 @@ por WhatsApp, pero ahora llega completo).
 |---|---|---|
 | Framework | **Next.js 15** (App Router) + **React 19** | Frontend y API en un solo proyecto desplegable en Vercel, sin servidor aparte. |
 | Lenguaje | **TypeScript** | Tipos compartidos entre API y componentes (`src/lib/types.ts`). |
-| Base de datos | **PostgreSQL** en Supabase | Postgres administrado con plan gratuito suficiente para el volumen del negocio. |
+| Base de datos | **PostgreSQL** en Supabase (São Paulo) | Postgres administrado, en la misma región que las funciones (`gru1`). |
 | ORM | **Prisma 6** | Migraciones versionadas y consultas parametrizadas por defecto. |
 | Archivos | **Supabase Storage** | Imágenes de productos, accedido por su API REST directamente. |
-| Pagos | **Mercado Pago** Checkout Pro | Medio de pago dominante en Argentina. Integración por REST, sin SDK. |
-| Auth | **JWT** (`jsonwebtoken`) | Un único administrador: no justificaba un proveedor de identidad. |
-| Estilos | **CSS plano** con custom properties | Una sola hoja, paleta temática, sin dependencias de framework CSS. |
-| Hosting | **Vercel** + Vercel Analytics | Deploy automático en cada push. |
+| Auth | **JWT** en cookie `httpOnly` | Un único administrador: no justificaba un proveedor de identidad. |
+| Estilos | **CSS plano** con custom properties | Paleta temática, sin framework CSS. Fuentes con `next/font`, íconos SVG con `lucide-react`. |
+| Tests | **Vitest** (unitarios + integración contra Postgres real) | Lo que cuesta plata (totales, ofertas, turnos, permisos) tiene test. |
+| CI | **GitHub Actions** | Typecheck, lint, tests, build, auditoría de dependencias y chequeo de secretos en el bundle. |
+| Herramientas | **Python + pandas** | Script de actualización masiva de precios desde el Excel del mayorista. |
+| Hosting | **Vercel** + Vercel Analytics | Deploy automático en cada push, cron diario de limpieza. |
 
 ---
 
@@ -104,176 +142,185 @@ por WhatsApp, pero ahora llega completo).
 ```mermaid
 flowchart LR
     subgraph Navegador
-        T["Tienda<br/>(/)"]
+        T["Tienda<br/>(/, /bolsones, /ofertas…)"]
         P["Panel<br/>(/trastienda/gestion)"]
     end
 
-    subgraph Vercel["Vercel · Next.js"]
-        MW["middleware.ts<br/>CSP con nonce · CORS · cabeceras"]
-        RSC["Server Component<br/>render con productos"]
-        PUB["API pública<br/>/api/products · /api/checkout"]
-        ADM["API privada<br/>/api/gestion/*<br/>JWT + rate limit"]
-        WH["/api/webhooks/mercadopago<br/>firma HMAC"]
+    subgraph Vercel["Vercel · Next.js (gru1)"]
+        MW["middleware.ts<br/>CSP con nonce · CORS · CSRF · HSTS"]
+        RSC["Server Components<br/>render con catálogo y JSON-LD"]
+        PUB["API pública<br/>/api/checkout · /api/products"]
+        ADM["API privada<br/>/api/gestion/*<br/>cookie httpOnly + rate limit"]
+        CRON["/api/cron/limpiar-pedidos<br/>diario, con secreto"]
         CACHE[("Caché del catálogo<br/>invalidación por tag")]
     end
 
-    subgraph Supabase
+    subgraph Supabase["Supabase (São Paulo)"]
         DB[("PostgreSQL<br/>RLS activo")]
         ST[("Storage<br/>imágenes")]
     end
 
-    MP["Mercado Pago"]
     WA["WhatsApp"]
+    PY["Script de precios<br/>(Python)"]
 
     T --> MW --> RSC
     T --> PUB
     P --> ADM
     RSC --> CACHE
-    PUB --> CACHE
-    CACHE --> DB
     PUB --> DB
+    CACHE --> DB
     ADM --> DB
     ADM --> ST
     ADM -. invalida .-> CACHE
-    PUB --> MP
-    MP --> WH --> DB
+    CRON --> DB
+    PY --> ADM
     T --> WA
+    P --> WA
 ```
 
-**Una sola aplicación, dos superficies.** La tienda (`storefront-page.tsx`) y el panel
-(`admin-panel-page.tsx`) son componentes cliente que usan `fetch` contra los route
-handlers de Next. No hay servidor Express, ni librería de estado global, ni librería de
-data fetching: para el tamaño del proyecto no aportaban nada que justificara la
-dependencia.
+**Una sola aplicación, dos superficies.** La tienda (`storefront-page.tsx` y
+`components/storefront/`) y el panel (`admin-panel-page.tsx` y `components/admin/`)
+son componentes cliente que usan `fetch` contra los route handlers de Next. No hay
+servidor Express, ni librería de estado global, ni librería de data fetching: para el
+tamaño del proyecto no aportaban nada que justificara la dependencia.
 
-La home es un **Server Component** que lee el catálogo y se lo pasa a la tienda como
-estado inicial, de modo que el HTML ya llega con los productos (ver
-[SEO y asistentes de IA](#4-seo-y-descubribilidad-por-asistentes-de-ia)).
+Las páginas públicas son **Server Components** que leen el catálogo y se lo pasan a la
+tienda como estado inicial, junto con los datos del local: el HTML ya llega completo y
+el navegador no hace pedidos extra al cargar.
+
+**La lógica que importa es pura y compartida.** Precios, ofertas, envío y turnos viven
+en `src/lib/pricing.ts` y `src/lib/delivery-slots.ts`, sin acceso a la base ni al reloj
+global. El carrito los usa para mostrar el total al instante y el checkout los vuelve a
+correr en el servidor con los precios de la base: **lo que diga el navegador nunca
+define cuánto se cobra**.
 
 ---
 
 ## Decisiones técnicas destacadas
 
-### 1. Seguridad por capas
+### 1. Peso variable: total estimado y total final
 
-El sitio maneja pedidos y datos de pago, así que se hizo una auditoría completa. Lo más
-relevante que apareció y cómo se resolvió:
+**Problema:** en lo que va por peso, el total real se conoce recién al pesar. Cobrar
+online por adelantado obliga a devolver diferencias, y casi ninguna verdulería de
+Córdoba lo hace.
 
-**La base de datos estaba abierta.** Supabase expone todas las tablas del schema
-`public` por una API REST usando el rol `anon`, cuya clave está pensada para ser
-pública. Ese rol tenía `SELECT/INSERT/UPDATE/DELETE/TRUNCATE` sobre todas las tablas y
-la de productos tenía Row Level Security desactivado: con esa clave se podía borrar el
-catálogo entero.
+**Solución:**
 
-La migración [`enable_row_level_security`](prisma/migrations/20260811050000_enable_row_level_security/migration.sql)
-activa RLS en todas las tablas **sin políticas** (denegar por defecto), revoca los
-permisos de `anon` y `authenticated`, y cambia los privilegios por defecto para que
-ninguna tabla futura nazca accesible. La aplicación no se ve afectada porque Prisma se
-conecta como el rol dueño de las tablas, que no está sujeto a RLS.
+- El pedido se registra con un **total estimado** y el carrito lo dice explícitamente.
+- En el panel, el dueño carga los pesos reales. El total se recalcula con el **precio
+  guardado en el pedido** (no el del catálogo, que puede haber cambiado) y se conserva
+  el costo de envío original. El ajuste es condicional por `updatedAt`: si el pedido
+  cambió en otra pestaña, no se pisa.
+- Un botón arma el mensaje de WhatsApp con el **total final**, el alias para
+  transferir o el aviso de pago en efectivo, y el turno de entrega.
+- Si el pedido no tiene nada por peso, el total es exacto desde el principio.
 
-Además:
+### 2. Precios del servidor y detección de cambios
 
-| Capa | Implementación |
-|---|---|
-| **CSP** | `script-src` con **nonce por request** y `strict-dynamic`, sin `'unsafe-inline'`. Un script inyectado no tiene el nonce y el navegador lo bloquea. |
-| **CORS** | La API rechaza con 403 cualquier llamada de navegador cuyo `Origin` no sea el propio sitio. |
-| **Rate limiting** | Límites distintos por tipo de endpoint: login (8 intentos / 10 min), checkout, lecturas públicas, escrituras del panel, subidas y webhook. |
-| **Validación en el servidor** | Nada se confía al frontend: precios, cantidades, unidades, categorías e ids se revalidan en cada endpoint. El total del pedido se calcula siempre con los precios de la base. |
-| **Sanitización** | Se eliminan caracteres de control, bytes nulos, caracteres invisibles y overrides de dirección de texto; se normaliza y se acotan largos ([`sanitize.ts`](src/lib/sanitize.ts)). |
-| **Inyección SQL** | No hay consultas SQL armadas a mano: todo pasa por Prisma, que parametriza. Verificado con payloads de inyección en ids, login y filtros. |
-| **Autenticación** | JWT con algoritmo fijado a `HS256` (descarta tokens `alg: none`), validación de `issuer` y del claim `role`. Comparación de credenciales en tiempo constante. |
-| **Uploads** | Solo WebP/JPG/PNG hasta 5 MB, con nombre generado en el servidor: no se puede forzar un `.html` o `.svg` en el bucket público. |
-| **Webhook de pagos** | Verifica la firma HMAC de Mercado Pago y **consulta el pago contra su API** antes de tocar un pedido, en vez de confiar en el cuerpo del request. |
-| **Errores** | Mensajes genéricos al cliente; el detalle queda en los logs del servidor. Un JSON mal formado devuelve 400, no 500. |
-| **Auditoría** | Eventos sospechosos (logins fallidos, rate limits, tokens inválidos, orígenes bloqueados) se registran como JSON de una línea con la clave `secEvent`, filtrables en Vercel. Nunca se loguean contraseñas ni tokens. |
+**Problema:** con la inflación, los precios cambian seguido. Un cliente puede tener el
+carrito armado desde hace una hora con precios viejos.
 
-### 2. Checkout idempotente
+**Solución:** el carrito manda el precio que vio en cada línea. El servidor arma las
+líneas con los precios vigentes (oferta incluida) y, si alguno no coincide, **responde
+409 sin registrar nada**. El carrito se actualiza con los precios nuevos y le muestra al
+cliente "Tomate: antes $ 800, ahora $ 900" para que confirme de nuevo. Lo mismo pasa si
+algo se quedó sin stock. El carrito se siente instantáneo, pero la fuente de verdad del
+precio es siempre la base.
 
-**Problema:** cada envío del checkout creaba un pedido nuevo. En el celular, con una
-conexión lenta, tocar "Pagar" dos veces generaba dos pedidos y dos links de pago.
+### 3. Checkout idempotente
+
+**Problema:** en el celular, con una conexión lenta, tocar "Confirmar" dos veces
+generaba dos pedidos.
 
 **Solución, en tres barreras:**
 
 1. El botón se deshabilita mientras el pedido está en curso.
-2. El navegador genera una **clave de idempotencia** por intento de compra. Se mantiene
-   si el cliente reintenta y se renueva recién cuando el pedido se registra bien.
+2. El navegador genera una **clave de idempotencia** (UUID) por intento de compra. Se
+   mantiene si el cliente reintenta y se renueva cuando cambia el carrito o el pedido se
+   registra bien.
 3. La columna `idempotencyKey` tiene **índice único**. Si dos requests con la misma
-   clave llegan a la vez y ambos pasan la verificación previa, la base rechaza el
-   segundo insert (`P2002`) y el handler devuelve el pedido que ya se había creado.
+   clave llegan a la vez, la base rechaza el segundo insert (`P2002`) y el handler
+   devuelve el pedido que ya se había creado.
 
-Las dos primeras barreras se pueden saltear (dos pestañas, reintentos de red); la
-tercera no, porque la garantía la da la base de datos. Un reintento devuelve el mismo
-pedido y el **mismo link de pago**, sin generar preferencias duplicadas.
+Un reintento devuelve el mismo pedido **aunque el precio haya cambiado en el medio**
+(la idempotencia se resuelve antes que la validación de precios). Hay un test de
+integración con 6 requests simultáneos con la misma clave: un único pedido.
 
-Verificado con 3 envíos seguidos y con 5 requests concurrentes con la misma clave: en
-ambos casos, un único pedido.
+### 4. Seguridad por capas
 
-La llamada a Mercado Pago queda **fuera de cualquier transacción** a propósito:
-mantener una transacción abierta mientras se espera una API externa retiene locks todo
-ese tiempo. Si la creación del link de pago falla, el pedido igual queda registrado y el
-cliente puede pagar por transferencia.
+El sitio maneja pedidos con nombre, teléfono y dirección de clientes reales. Se hicieron
+dos auditorías ofensivas con verificación independiente de cada hallazgo; en la última
+**no aparecieron hallazgos críticos ni altos**, y los de severidad media y baja se
+corrigieron.
 
-### 3. Caché del catálogo con invalidación inmediata
+**La base de datos estaba abierta.** Supabase expone las tablas de `public` por una API
+REST con el rol `anon`, cuya clave es pública por diseño. Ese rol tenía todos los
+permisos y la tabla de productos no tenía RLS: con esa clave se podía borrar el
+catálogo. La migración [`enable_row_level_security`](prisma/migrations/20260811050000_enable_row_level_security/migration.sql)
+activa RLS sin políticas (denegar por defecto) y revoca los permisos; otra cierra la
+ejecución de funciones. Un **test de integración falla si alguna tabla queda sin RLS o
+con permisos para la API pública**, así una tabla nueva no puede nacer expuesta.
 
-**Problema:** la base está en São Paulo y la consulta del catálogo tardaba **~200 ms**.
-Como la home se renderiza por request (lo exige la CSP con nonce), cada visita pagaba
-esa latencia antes de mostrar nada.
+| Capa | Implementación |
+|---|---|
+| **Sesión del panel** | JWT `HS256` en una cookie `httpOnly`, `Secure`, `SameSite=Strict`, limitada a `/api/gestion`. Ningún JavaScript la puede leer. Revocación global con `ADMIN_TOKEN_VERSION`. Se rechazan los secretos de ejemplo de `.env.example`. |
+| **CSRF** | `SameSite=Strict`, control de `Origin` y rechazo de mutaciones con `Sec-Fetch-Site` distinto de `same-origin`. |
+| **CSP** | `script-src` con **nonce por request** y `strict-dynamic`. Sin CDNs externos: fuentes con `next/font` e íconos en SVG. HSTS, `nosniff`, `frame-ancestors 'none'`. |
+| **Rate limiting** | Por tipo de endpoint (login 8 / 10 min, checkout, lecturas, escrituras, subidas), con IPv6 agrupado por /64. |
+| **Validación** | Manual y centralizada ([`validation.ts`](src/lib/validation.ts)): ids estrictos dentro del rango de la base, números sin hexadecimal ni exponentes, precios mayores a 0, fechas reales, textos sin caracteres de control, invisibles ni aislamientos bidi. Solo los errores de validación llegan al cliente; los de Prisma quedan en el log. |
+| **Inyección SQL** | No hay SQL armado a mano en la app: todo pasa por Prisma, que parametriza. |
+| **Uploads** | Solo WebP/JPG/PNG hasta 4 MB (debajo del límite de Vercel), validados por **magic bytes** (no por lo que declara el navegador), con nombre generado en el servidor. Los cuerpos se leen con contador de bytes: un envío *chunked* gigante se corta sin leerse entero. |
+| **XSS** | React escapa todo; el JSON-LD se serializa escapando `<`, `>` y `&`. Los mensajes de WhatsApp que manda el local no copian texto libre del cliente. |
+| **Secretos** | Ninguna variable es `NEXT_PUBLIC_`; los módulos de servidor importan `server-only`, y la CI verifica que ningún nombre ni valor de variable sensible aparezca en el JavaScript del navegador. |
+| **Dependencias** | `npm audit` de producción sin vulnerabilidades (se corrigió una RCE crítica de Next). |
+| **Auditoría** | Eventos sospechosos (logins fallidos, rate limits, tokens inválidos, orígenes bloqueados) se registran como JSON con la clave `secEvent`. Nunca se loguean contraseñas, tokens ni lo que se tipea en el login. |
+
+### 5. Caché del catálogo con invalidación inmediata
+
+**Problema:** cada visita consultaba el catálogo a la base antes de mostrar nada (la
+página se renderiza por request porque lo exige la CSP con nonce).
 
 **Solución:** la lectura del catálogo se cachea con `unstable_cache` y un tag. Cada
-acción del panel que modifica productos (crear, editar, borrar, cambiar disponibilidad)
-invalida ese tag, así que **un cambio de precio o de stock se ve al instante** y no
-cuando vence la caché.
+acción del panel que modifica productos invalida ese tag, así que **un cambio de precio
+o de stock se ve al instante**. Las ofertas que vencen no necesitan invalidación: el
+precio efectivo se calcula al leer, con la hora actual. Además, las funciones corren en
+São Paulo (`gru1`), en la misma región que la base.
 
-Resultado medido en local: **~200 ms → ~5 ms** por lectura. Como efecto secundario,
-muchas visitas simultáneas se traducen en una sola consulta a la base.
+### 6. Turnos y horarios con una sola fuente de verdad
 
-### 4. SEO y descubribilidad por asistentes de IA
+Los horarios del local estaban en tres lugares (texto en variables de entorno, las
+ventanas del "abierto ahora" y el JSON-LD) y podían contradecirse. Ahora todo se deriva
+de [`store-hours.ts`](src/lib/store-hours.ts): el texto que se muestra, los datos
+estructurados y los **turnos de entrega**. Un turno se ofrece solo si cae dentro del
+horario del local ese día (el domingo, que cierra a las 14, solo aparece el de 13 a 14)
+y si falta al menos una hora para que empiece. El servidor recalcula los turnos al
+recibir el pedido: un turno vencido o inventado se rechaza.
 
-**Problema:** los productos se cargaban con `fetch` después de ejecutar JavaScript.
-Google suele ejecutarlo, pero los crawlers de asistentes de IA en general no: para
-ellos la tienda aparecía vacía.
+### 7. SEO local y descubribilidad por asistentes de IA
 
-**Solución:**
-
-- La home pasó a **Server Component** y el HTML inicial ya incluye todo el catálogo.
-- **Datos estructurados JSON-LD** con `GroceryStore` (dirección, coordenadas, horarios,
-  zona de envío), `OfferCatalog` con cada producto, precio y disponibilidad
-  (`InStock`/`OutOfStock`) y `FAQPage`.
+- Las páginas son **Server Components**: el HTML incluye el catálogo completo.
+- **Datos estructurados JSON-LD**: `GroceryStore` con dirección, coordenadas y horarios;
+  cada producto como `Offer` con disponibilidad (`InStock`/`OutOfStock`), vencimiento de
+  la oferta y **precio por unidad** (`UnitPriceSpecification` con `KGM`, `GRM` o `C62`);
+  `FAQPage` y `BreadcrumbList`.
+- Páginas propias para bolsones, ofertas, frutas, verduras y envíos, cada una con texto
+  útil y metadata propia; sitemap con la fecha real de modificación de los productos.
 - **[`/llms.txt`](https://elpampa.vercel.app/llms.txt)**: resumen del negocio en texto
   plano para modelos de lenguaje, generado a partir de los datos reales.
-- `robots.txt` permite explícitamente a los crawlers de IA.
-- Sección visible de preguntas frecuentes: contenido real para el usuario, no texto
-  oculto para posicionar.
 
-### 5. Mercado Pago con degradación controlada
+### 8. Pensado para el celular
 
-La integración es **opcional**: si no hay token configurado, el selector de pago con
-tarjeta no se muestra y el flujo de transferencia queda exactamente igual. Se integró
-por REST con `fetch` (dos llamadas: crear preferencia y consultar pago) en lugar de
-sumar el SDK.
-
-Detalle no obvio: Mercado Pago exige cantidades enteras, pero acá se venden 0,75 kg.
-Cada línea se envía como una unidad con el subtotal como precio, y la cantidad real
-queda en el título que ve el cliente.
-
-### 6. Pensado para el celular
-
-La mayoría de los clientes entra desde el teléfono:
-
-- Áreas táctiles de **44×44 px** (recomendación de Apple) en controles de cantidad,
-  aplicadas solo en pantallas táctiles con `@media (pointer: coarse)` para no agrandar
-  el diseño en escritorio.
-- Barra de navegación fija que acompaña el scroll.
-- Probado en anchos de 375, 768, 1280 y 1440 px sin scroll horizontal.
+- Áreas táctiles de 44×44 px, validación inline sin librerías, foco en el primer error.
+- Sin Font Awesome por CDN ni `@import` de Google Fonts: menos peso y sin bloquear el
+  render.
+- Tarjetas de producto memoizadas: cambiar el carrito no re-renderiza toda la grilla.
 - Las animaciones respetan `prefers-reduced-motion`.
 
-### 7. Rutas privadas no predecibles
+### 9. Rutas privadas no predecibles
 
 El panel vive en `/trastienda` en lugar de `/admin` o `/login`, y no figura en
-`robots.txt` (que es público y lo habría anunciado). **No se presenta como medida de
-seguridad** —cualquiera puede verlo en el JavaScript—, sino como forma de quedar fuera
-del barrido automático de bots. La protección real es el JWT, el rate limiting y la
-contraseña.
+`robots.txt`. **No se presenta como medida de seguridad** —cualquiera puede verlo en el
+JavaScript—, sino como forma de quedar fuera del barrido automático de bots.
 
 ---
 
@@ -284,37 +331,50 @@ erDiagram
     Product {
         int      id PK
         string   name
-        float    price
+        float    price        "precio normal"
         string   image
-        string   unit      "kg | g | unidad"
-        string   category  "Frutas | Verduras | Almacén | Ofertas"
+        string   unit         "kg | g | unidad | atado | bandeja"
+        string   category     "Bolsones | Frutas | Verduras | Almacén | Ofertas"
+        string   description  "qué trae un bolsón"
+        float    offerPrice   "opcional"
+        datetime offerEndsAt  "opcional"
         boolean  available
         datetime createdAt
+        datetime updatedAt
     }
 
     Order {
-        int      id PK
-        json     items           "snapshot del carrito"
-        float    total
-        string   status          "pending | paid | cancelled | failed"
-        string   deliveryMethod  "pickup | delivery"
-        string   idempotencyKey  UK
-        string   mpPreferenceId
-        string   mpPaymentId
-        datetime createdAt
-        datetime updatedAt
+        int         id PK
+        json        items            "snapshot del pedido"
+        float       subtotal
+        float       shippingCost
+        float       total
+        OrderStatus status           "pending | paid | cancelled | failed"
+        string      deliveryMethod   "pickup | delivery"
+        string      paymentMethod    "transfer | cash"
+        string      deliverySlot     "ej. 2026-10-06T13"
+        datetime    adjustedAt       "pesos reales cargados"
+        string      idempotencyKey   UK
+        string      customerName
+        string      customerPhone
+        string      customerAddress
+        string      notes
+        string      replacementPolicy "replace | skip | call"
+        datetime    createdAt
+        datetime    updatedAt
     }
 ```
 
 `Order.items` es un **snapshot en JSON** de los productos al momento de la compra, no
 una relación con `Product`. Es intencional: si mañana cambia el precio del tomate o se
 borra un producto, los pedidos históricos siguen mostrando lo que realmente se vendió y
-a qué precio. Como consecuencia, listar pedidos no requiere consultas adicionales por
-ítem (no hay problema N+1), y el checkout resuelve todo el carrito en una sola consulta
-con `WHERE id IN (...)`.
+a qué precio, y el ajuste de pesos usa ese precio. Listar pedidos no requiere consultas
+por ítem (no hay N+1) y el checkout resuelve todo el carrito en una sola consulta con
+`WHERE id IN (...)`.
 
-Las 6 migraciones están versionadas en [`prisma/migrations`](prisma/migrations) e
-incluyen comentarios con el porqué de cada cambio.
+El estado del pedido es un **enum de Postgres**: la base rechaza cualquier valor que no
+sea uno de los cuatro. Las migraciones están versionadas en
+[`prisma/migrations`](prisma/migrations) y explican el porqué de cada cambio.
 
 ---
 
@@ -325,26 +385,35 @@ incluyen comentarios con el porqué de cada cambio.
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/api/products` | Catálogo (cacheado). Disponibles primero, luego alfabético. |
-| `GET` | `/api/store-info` | Datos del local: horarios, envíos, medios de pago habilitados. |
-| `POST` | `/api/checkout` | Registra el pedido. Idempotente. Opcionalmente genera link de Mercado Pago. |
-| `POST` | `/api/webhooks/mercadopago` | Notificaciones de pago. Requiere firma HMAC válida. |
+| `GET` | `/api/store-info` | Datos públicos del local: horarios, envío, alias. |
+| `POST` | `/api/checkout` | Registra el pedido. Idempotente. 409 si subió un precio (o una baja encarece el total) o algo está sin stock; 400 si el turno ya no está disponible; 429/503 por los topes de spam. Si un precio solo bajó, se cobra el menor y se avisa (`priceDrops`). |
 
-### Privada (`Authorization: Bearer <jwt>`)
+### Privada (cookie de sesión `httpOnly`)
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `POST` | `/api/gestion/login` | Devuelve un JWT válido por 12 h. |
-| `POST` | `/api/gestion/products` | Crea un producto. |
+| `POST` | `/api/gestion/login` | Inicia sesión: setea la cookie por 12 h. |
+| `POST` | `/api/gestion/logout` | Borra la cookie. |
+| `GET` | `/api/gestion/session` | ¿La sesión sigue vigente? |
+| `POST` | `/api/gestion/products` | Crea un producto (con oferta y descripción opcionales). |
 | `PUT` / `DELETE` | `/api/gestion/products/:id` | Edita o elimina un producto. |
 | `PUT` | `/api/gestion/products/:id/availability` | Marca un producto como disponible o sin stock. |
+| `POST` | `/api/gestion/products/bulk` | Actualización masiva de precios, stock y ofertas (hasta 500, todo o nada). |
 | `POST` | `/api/gestion/upload-product-image` | Sube una imagen a Supabase Storage. |
-| `GET` | `/api/gestion/orders?date=YYYY-MM-DD` | Pedidos de un día (hora de Argentina). |
+| `GET` | `/api/gestion/orders?date=YYYY-MM-DD` | Pedidos de un día: creados ese día, con turno ese día, o retiros que entraron el día anterior después del corte. |
+| `GET` | `/api/gestion/orders/atrasados` | Pedidos abiertos de días anteriores (para que nada quede sin resolver). |
+| `PUT` / `DELETE` | `/api/gestion/orders/:id` | Ajusta los pesos reales / elimina un pedido. |
 | `PUT` | `/api/gestion/orders/:id/confirm` | Marca un pedido como pagado. |
-| `PUT` | `/api/gestion/orders/:id/cancel` | Cancela un pedido pendiente. |
-| `DELETE` | `/api/gestion/orders/:id` | Elimina un pedido. |
+| `PUT` | `/api/gestion/orders/:id/cancel` | Cancela un pedido. |
 
-Todos los endpoints privados siguen el mismo patrón: verificación de token, rate limit,
-validación del cuerpo y `try/catch` con log del error y respuesta genérica.
+### Cron
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/cron/limpiar-pedidos` | Diario (Vercel Cron, `Authorization: Bearer CRON_SECRET`). Cancela los abiertos de más de 7 días salvo los pagados en efectivo o ya pesados (casi seguro se entregaron) y borra los cancelados hace más de 90 días. Nunca toca pedidos pagados ni cancela y borra en la misma corrida. |
+
+Todos los endpoints privados siguen el mismo patrón: verificación de sesión, rate
+limit, validación del cuerpo y `try/catch` con log del error y respuesta genérica.
 
 ---
 
@@ -353,37 +422,46 @@ validación del cuerpo y `try/catch` con log del error y respuesta genérica.
 ```
 src/
 ├── app/
-│   ├── page.tsx                  # Home: Server Component, JSON-LD, preguntas frecuentes
-│   ├── layout.tsx                # Metadata global
+│   ├── page.tsx                  # Home (Server Component)
+│   ├── bolsones/ ofertas/ frutas/ verduras/   # Páginas de categoría
+│   ├── envios/                   # Zonas, turnos, costos y medios de pago
+│   ├── layout.tsx                # Metadata global y fuentes (next/font)
 │   ├── globals.css               # Estilos (paleta con custom properties)
 │   ├── trastienda/               # Ingreso y panel de administración
 │   ├── api/
-│   │   ├── products/             # Catálogo público
-│   │   ├── checkout/             # Registro de pedidos
-│   │   ├── store-info/
-│   │   ├── webhooks/mercadopago/
+│   │   ├── products/  store-info/  checkout/
+│   │   ├── cron/limpiar-pedidos/
 │   │   └── gestion/              # API privada del panel
 │   ├── llms.txt/  robots.ts  sitemap.ts  opengraph-image.tsx
-│   └── terminos/  privacidad/  success/  failure/  pending/
+│   └── terminos/  privacidad/  not-found.tsx
 ├── components/
-│   ├── storefront-page.tsx       # Tienda
-│   ├── admin-panel-page.tsx      # Panel
+│   ├── storefront-page.tsx       # Tienda (orquestador)
+│   ├── storefront/               # Carrito, checkout, tarjetas, hooks
+│   ├── admin-panel-page.tsx      # Panel (orquestador)
+│   ├── admin/                    # Productos, pedidos, ajuste de pesos, mensajes
+│   ├── category-landing.tsx  info-section.tsx  brand-icons.tsx
 │   └── login-page.tsx
 ├── lib/
-│   ├── auth.ts                   # JWT y comparación en tiempo constante
-│   ├── products.ts               # Catálogo cacheado + invalidación
-│   ├── mercadopago.ts            # Preferencias y verificación de webhooks
-│   ├── rate-limit.ts             # Limitador por IP con presets por endpoint
-│   ├── sanitize.ts  validation.ts  request-body.ts  route-params.ts
-│   ├── security-log.ts           # Eventos de seguridad en JSON
+│   ├── pricing.ts                # Precios, ofertas, envío y totales (puro)
+│   ├── delivery-slots.ts         # Turnos de entrega (puro)
+│   ├── store-hours.ts            # Horarios: única fuente de verdad
 │   ├── product-units.ts          # Unidades, pasos y redondeo de cantidades
-│   ├── site.ts                   # Configuración del negocio desde variables de entorno
-│   └── routes.ts  store-hours.ts  format-price.ts  types.ts
-└── middleware.ts                 # CSP con nonce, CORS y cabeceras de seguridad
+│   ├── validation.ts  sanitize.ts  request-body.ts  route-params.ts
+│   ├── auth.ts                   # Sesión del panel (cookie + JWT)
+│   ├── products.ts               # Catálogo cacheado + invalidación
+│   ├── order-lifecycle.ts        # Ajuste de pesos, limpieza, serialización
+│   ├── seo.ts                    # JSON-LD
+│   ├── rate-limit.ts  security-log.ts  whatsapp.ts  site.ts  types.ts
+│   └── …
+└── middleware.ts                 # CSP con nonce, CORS, CSRF y cabeceras
 prisma/
 ├── schema.prisma
-└── migrations/                   # 6 migraciones comentadas
-scripts/                          # Utilidades de mantenimiento de datos
+└── migrations/                   # Migraciones comentadas
+tests/integration/                # Tests contra Postgres real
+scripts/
+├── actualizar_precios.py         # Script de precios (Python + pandas)
+├── precios/                      # Ejemplos e instrucciones del script
+└── check-client-bundle.mjs       # Verifica que no haya secretos en el bundle
 ```
 
 ---
@@ -406,15 +484,36 @@ npm run dev
 - Tienda: http://localhost:3000
 - Panel: http://localhost:3000/trastienda (usuario y contraseña de `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
 
-Otros comandos:
-
-```bash
-npm run build     # prisma generate + next build
-npm run start     # sirve la build de producción
-```
-
 > **Recomendación:** usá una base de datos separada para desarrollo. Si `.env` apunta a
 > la base de producción, cualquier prueba local crea pedidos reales.
+
+---
+
+## Tests y CI
+
+```bash
+npm run typecheck          # tsc --noEmit
+npm run lint               # ESLint (next/core-web-vitals + next/typescript)
+npm test                   # tests unitarios (Vitest)
+TEST_DATABASE_URL=postgresql://…/elpampa_test npm run test:integration
+npm run build && npm run check:bundle   # ningún secreto en el JavaScript del navegador
+npm run check:pages        # ni en el HTML, el payload RSC o las respuestas de la API (levanta next start)
+python3 -m unittest scripts/test_actualizar_precios.py
+```
+
+- **Unitarios** (~360): precios y ofertas, redondeo a centavos, envío y mínimos, turnos
+  en los bordes de horario (11:59 / 12:00 / 12:01, domingo, medianoche, cambio de año) y
+  con el servidor en otras zonas horarias, validación, sesión, mensajes de WhatsApp, SEO.
+- **Integración** (~120): llaman a los route handlers contra un **Postgres real**:
+  checkout con todos sus 400/409, idempotencia concurrente, 401 en todos los endpoints
+  del panel, ofertas, bulk todo-o-nada, ajuste de pesos con edición concurrente, cron,
+  subida de imágenes y permisos de la base para la API pública. La base de test se crea
+  y migra sola; los tests se niegan a correr contra una base cuyo nombre no diga "test".
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): en cada pull request
+  y push corre typecheck, lint, tests (también con otra zona horaria), integración con
+  Postgres 16, build, chequeo de secretos en el bundle y en lo que el servidor manda en
+  cada request (HTML, RSC y API), `npm audit` de producción y los tests del script de
+  Python.
 
 ---
 
@@ -422,25 +521,26 @@ npm run start     # sirve la build de producción
 
 | Variable | Obligatoria | Descripción |
 |---|:---:|---|
-| `DATABASE_URL` | Sí | Conexión a Postgres. En Supabase, pooler en modo *transaction*. |
-| `DIRECT_URL` | Sí | Conexión para migraciones. En Supabase, pooler en modo *session*. |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Sí | Credenciales del panel. |
-| `JWT_SECRET` | Sí | Secreto para firmar tokens. Mínimo recomendado: 32 caracteres aleatorios. |
+| `DATABASE_URL` | Sí | Conexión a Postgres. En Supabase, pooler en modo *transaction* con `pgbouncer=true&connection_limit=1`. |
+| `DIRECT_URL` | Sí (en Production) | Conexión para migraciones. En Supabase, pooler en modo *session* (puerto 5432). El build de producción la usa para migrar: sin ella el deploy se corta. |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Sí | Credenciales del panel. Contraseña larga (16+ caracteres). |
+| `JWT_SECRET` | Sí | Secreto para firmar las sesiones (`openssl rand -base64 48`). Los valores de ejemplo y, en producción, los de prueba del repo se rechazan. |
+| `ADMIN_TOKEN_VERSION` | No | Cambiarla y hacer Redeploy cierra todas las sesiones abiertas. |
+| `CRON_SECRET` | Sí, para la limpieza | Secreto del cron diario (`openssl rand -base64 48`). |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Para imágenes | Subida de imágenes a Storage. La service role key nunca sale del servidor. |
 | `SUPABASE_STORAGE_BUCKET` | No | Nombre del bucket (por defecto `product-images`). |
-| `SITE_URL` | No | URL canónica para metadata, sitemap y Mercado Pago. |
-| `STORE_NAME`, `STORE_ADDRESS`, `STORE_NEIGHBORHOOD` | No | Datos del negocio. |
-| `STORE_WEEKDAY_HOURS`, `STORE_SUNDAY_HOURS` | No | Texto de horarios. |
-| `TRANSFER_ALIAS`, `TRANSFER_CBU`, `WHATSAPP_NUMBER` | No | Datos para cobrar por transferencia. |
-| `DELIVERY_PROVIDER_NAME`, `DELIVERY_MAX_WEIGHT_KG` | No | Datos del servicio de envío. |
-| `DELIVERY_MIN_PURCHASE` | No | Pedido mínimo para envío (por defecto 10000). |
-| `DELIVERY_FREE_THRESHOLD` | No | Monto desde el que el envío es gratis (por defecto 20000). |
-| `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` | No | Activan Mercado Pago. Sin ellas, solo transferencia. |
+| `SITE_URL` | No | URL canónica para metadata, sitemap y orígenes permitidos. |
+| `STORE_NAME`, `STORE_ADDRESS`, `STORE_NEIGHBORHOOD` | No | Datos del negocio. Los horarios están en `src/lib/store-hours.ts`. |
+| `TRANSFER_ALIAS`, `TRANSFER_CBU`, `WHATSAPP_NUMBER`, `CONTACT_EMAIL` | No | Datos de contacto y para cobrar por transferencia. |
+| `DELIVERY_FEE` | No | Costo fijo del envío (por defecto 4000). |
+| `DELIVERY_MIN_PURCHASE` | No | Pedido mínimo para envío, sobre los productos (por defecto 10000). |
+| `DELIVERY_FREE_THRESHOLD` | No | Desde este monto el envío es gratis (por defecto 20000). |
+| `DELIVERY_MAX_WEIGHT_KG` | No | Peso a partir del cual se avisa que el envío puede ir en dos viajes. |
 | `INSTAGRAM_URL` | No | Si está vacía, el menú no muestra Instagram. |
+| `GOOGLE_REVIEW_URL` | No | Link corto para dejar reseña en Google. Si está vacía, no se pide la reseña. |
 
-Ninguna variable usa el prefijo `NEXT_PUBLIC_`: todos los valores se leen en el
-servidor y ningún secreto llega al bundle del navegador. El archivo `.env` está excluido
-del repositorio.
+Ninguna variable usa el prefijo `NEXT_PUBLIC_`. El `.gitignore` excluye cualquier
+`.env*` salvo `.env.example`.
 
 ---
 
@@ -449,16 +549,24 @@ del repositorio.
 El proyecto está desplegado en **Vercel** con deploy automático en cada push a `main`.
 
 1. Importar el repositorio en Vercel (preset **Next.js**, comandos por defecto).
-2. Cargar las variables de entorno de la tabla anterior.
-3. Aplicar las migraciones contra la base de producción: `npm run prisma:deploy`.
+   [`vercel.json`](vercel.json) fija la región de las funciones en `gru1` (São Paulo,
+   junto a la base) y programa el cron diario de limpieza.
+2. Cargar las variables de entorno de la tabla anterior en **Production** (incluidos
+   `DIRECT_URL` y `CRON_SECRET`).
+3. Las migraciones se aplican solas: el build de producción corre
+   [`scripts/migrate-on-production.mjs`](scripts/migrate-on-production.mjs)
+   (`prisma migrate deploy` y después una comprobación del esquema,
+   [`scripts/verificar-esquema.sql`](scripts/verificar-esquema.sql)). Si algo falla
+   (falta `DIRECT_URL`, una migración da error o el esquema no es el esperado), el build
+   se corta y queda en línea la versión anterior; el log dice qué pasó y cómo seguir.
+   Los previews no tocan la base. Para ver el estado a mano: `npx prisma migrate status`
+   con las variables de producción.
+4. Recomendado: en **Vercel → Firewall**, una regla de rate limit para
+   `/api/gestion/login` y `/api/checkout`. El limitador del código vive en la memoria de
+   cada instancia; la regla del firewall es global.
 
-### Mercado Pago (opcional)
-
-1. Crear una aplicación en el [panel de desarrolladores](https://www.mercadopago.com.ar/developers/panel/app)
-   y copiar el Access Token a `MP_ACCESS_TOKEN`.
-2. En **Webhooks → Configurar notificaciones**, registrar
-   `https://<tu-dominio>/api/webhooks/mercadopago` con el evento **Pagos**.
-3. Copiar la clave secreta a `MP_WEBHOOK_SECRET`.
+> El plan **Hobby** de Vercel es para uso personal y no comercial. Para un negocio
+> corresponde el plan **Pro**.
 
 ### Monitoreo
 
@@ -467,22 +575,39 @@ limits alcanzados y otros eventos de seguridad.
 
 ---
 
+## Script de actualización de precios
+
+[`scripts/actualizar_precios.py`](scripts/actualizar_precios.py) toma la lista de precios
+mayoristas (Excel o CSV, con columnas autodetectadas), la cruza con el catálogo por
+nombre (normalización, alias y coincidencia aproximada con umbral), calcula el precio de
+venta con un **margen por categoría** y un redondeo comercial, y frena los cambios de más
+de ±40 % sin confirmación (inflación sí, errores de tipeo no).
+
+Por defecto **simula** y genera un reporte en Excel o CSV. Con `--aplicar` manda los cambios en lotes al
+endpoint `bulk`, con reintentos y respeto de `Retry-After`. Las credenciales van por
+variables de entorno y solo viajan por `https://`. Instrucciones para el dueño en
+[`scripts/precios/README.md`](scripts/precios/README.md).
+
+---
+
 ## Limitaciones conocidas y próximos pasos
 
 Decisiones tomadas conscientemente, con su costo:
 
-- **Rate limiting en memoria.** En Vercel cada instancia serverless tiene su propia
-  memoria, así que el límite no es global. Frena la fuerza bruta contra el login, pero
-  para protección distribuida el siguiente paso es Vercel Firewall o Upstash Redis.
+- **Rate limiting en memoria.** En Vercel cada instancia tiene su propia memoria, así que
+  el límite por IP no es global. Lo compensan los topes contados en la base (5 pedidos
+  por teléfono en 24 h y 150 por hora en total) y la regla de Vercel Firewall recomendada.
 - **Render dinámico en todas las páginas.** La CSP con nonce requiere un valor distinto
-  por respuesta, lo que impide el prerenderizado estático. Se compensa con la caché del
-  catálogo; la alternativa sería una CSP más débil con `'unsafe-inline'`.
-- **Token del panel en `localStorage`.** Es vulnerable si hubiera XSS; la CSP estricta
-  mitiga ese riesgo. El paso siguiente sería una cookie `httpOnly`.
-- **Sin tests automatizados.** La verificación se hizo con pruebas manuales y scripts
-  contra la API (validación, inyección, concurrencia, idempotencia). Sumar tests de
-  integración para checkout y webhook es la próxima prioridad.
+  por respuesta y eso impide el prerenderizado estático. Se compensa con la caché del
+  catálogo y la región de las funciones junto a la base.
+- **"Cerrar sesión" borra la cookie de ese navegador**, pero no revoca el token: para
+  cortar todas las sesiones se cambia `ADMIN_TOKEN_VERSION` y se hace Redeploy.
+- **Montos como `Float`.** Los precios son pesos enteros y los totales se redondean a
+  centavos con una función probada; pasar a `Decimal` o a centavos enteros no cambiaba
+  ningún resultado y agregaba conversiones en toda la app.
 - **Un solo administrador.** El modelo de auth no contempla múltiples usuarios ni roles.
+- **Próximos pasos de negocio:** cupo por turno, cuentas de cliente, suscripción al
+  bolsón semanal y línea mayorista.
 
 ---
 

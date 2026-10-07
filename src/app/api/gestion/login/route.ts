@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createAdminToken, safeCompare } from '@/lib/auth';
-import { RATE_LIMITS, checkRateLimit, getClientIp, resetRateLimit, tooManyRequestsResponse } from '@/lib/rate-limit';
+import { isExampleSecret, safeCompare, setAdminSessionCookie } from '@/lib/auth';
+import { RATE_LIMITS, checkRateLimit, getClientIp, rateLimitSubject, resetRateLimit, tooManyRequestsResponse } from '@/lib/rate-limit';
 import { logSecurityEvent } from '@/lib/security-log';
 import { sanitizeText } from '@/lib/sanitize';
 import { readJsonBody } from '@/lib/request-body';
@@ -13,7 +13,7 @@ const MAX_CREDENTIAL_LENGTH = 200;
 
 export async function POST(request: Request) {
   const ip = getClientIp(request);
-  const rateLimitKey = `login:${ip}`;
+  const rateLimitKey = `login:${rateLimitSubject(ip)}`;
   const rateLimit = checkRateLimit(rateLimitKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
 
   if (!rateLimit.ok) {
@@ -37,6 +37,10 @@ export async function POST(request: Request) {
       console.error('Error en POST /api/gestion/login: faltan ADMIN_USERNAME o ADMIN_PASSWORD.');
       return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
     }
+    if (isExampleSecret(adminPassword)) {
+      console.error('Error en POST /api/gestion/login: ADMIN_PASSWORD tiene un valor de ejemplo o de prueba publicado en el repo. Cambiala en Vercel y hacé Redeploy.');
+      return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
+    }
 
     const parsed = await readJsonBody<{ username?: unknown; password?: unknown }>(request);
     if (!parsed.ok) return parsed.response;
@@ -58,13 +62,14 @@ export async function POST(request: Request) {
     const passwordOk = safeCompare(password, adminPassword);
 
     if (!usernameOk || !passwordOk) {
-      // Se registra el usuario probado (no la contraseña) para poder distinguir
-      // un tipeo del dueño de alguien barriendo nombres de usuario.
+      // Nunca el texto tipeado: si el dueño escribe la contraseña en el campo
+      // usuario (pasa con el autocompletado del celular) quedaría en los logs de
+      // Vercel. Alcanza con saber qué falló.
       logSecurityEvent('login_fallido', {
         ip,
         path: '/api/gestion/login',
         method: 'POST',
-        subject: username.slice(0, 40),
+        reason: usernameOk ? 'contraseña incorrecta' : 'usuario incorrecto',
       });
       return NextResponse.json({ error: 'Usuario o contraseña incorrectos.' }, { status: 401 });
     }
@@ -73,7 +78,8 @@ export async function POST(request: Request) {
     resetRateLimit(rateLimitKey);
     logSecurityEvent('login_ok', { ip, path: '/api/gestion/login', method: 'POST' });
 
-    return NextResponse.json({ token: createAdminToken() });
+    // El token va en una cookie httpOnly: el JavaScript del panel nunca lo ve.
+    return setAdminSessionCookie(NextResponse.json({ ok: true }));
   } catch (error) {
     console.error('Error en POST /api/gestion/login:', error);
     return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
