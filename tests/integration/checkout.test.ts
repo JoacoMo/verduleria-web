@@ -5,6 +5,7 @@ import { ORDER_CAPS, RATE_LIMITS } from '@/lib/rate-limit';
 import type { CheckoutResponse } from '@/lib/types';
 import {
   apiRequest,
+  createOrder,
   createProduct,
   describeDb,
   freezeTime,
@@ -335,6 +336,28 @@ describeDb('POST /api/checkout: mínimo de envío, stock y precios', () => {
     const response = await post(body({ cart: [{ id: product.id, quantity: 1, price: 800 }] }));
     expect(response.status).toBe(409);
     expect(await readJson(response)).toMatchObject({ priceChanges: [{ previousPrice: 800, currentPrice: 1000 }] });
+  });
+});
+
+describeDb('POST /api/checkout: pestañas de antes de la actualización', () => {
+  it('el pedido con el formato viejo (sin datos del cliente) pide recargar, sin crear nada', async () => {
+    const product = await createProduct({ price: 1000 });
+    const idempotencyKey = newIdempotencyKey();
+    for (const paymentMethod of ['transfer', 'mercadopago']) {
+      const response = await post({ cart: [{ id: product.id, quantity: 1 }], isDelivery: false, paymentMethod, idempotencyKey });
+      expect(response.status).toBe(400);
+      expect(await readJson(response)).toEqual({
+        error: 'La tienda se actualizó mientras tenías la página abierta. Recargá la página y volvé a armar el pedido: todavía no se registró nada.',
+      });
+    }
+    expect(await ordersWithKey(idempotencyKey)).toBe(0);
+  });
+
+  it('el reintento de un pedido que la versión vieja ya había creado devuelve ese pedido', async () => {
+    const order = await createOrder({ paymentMethod: null, idempotencyKey: newIdempotencyKey() });
+    const response = await post({ cart: [], isDelivery: false, paymentMethod: 'transfer', idempotencyKey: order.idempotencyKey });
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({ orderId: order.id, yaExistia: true });
   });
 });
 

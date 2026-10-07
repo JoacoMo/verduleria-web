@@ -33,8 +33,12 @@ export async function POST(request: Request) {
     const adminUsername = process.env.ADMIN_USERNAME;
     const adminPassword = process.env.ADMIN_PASSWORD;
 
-    if (!adminUsername || !adminPassword || isExampleSecret(adminPassword)) {
+    if (!adminUsername || !adminPassword) {
       console.error('Error en POST /api/gestion/login: faltan ADMIN_USERNAME o ADMIN_PASSWORD.');
+      return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
+    }
+    if (isExampleSecret(adminPassword)) {
+      console.error('Error en POST /api/gestion/login: ADMIN_PASSWORD tiene un valor de ejemplo o de prueba publicado en el repo. Cambiala en Vercel y hacé Redeploy.');
       return NextResponse.json({ error: 'No se pudo iniciar sesión.' }, { status: 500 });
     }
 

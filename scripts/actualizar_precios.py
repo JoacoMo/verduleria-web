@@ -1663,6 +1663,12 @@ HOSTS_LOCALES = ('localhost', '127.0.0.1', '::1')
 def normalizar_url(url: str) -> str:
     url = (url or '').strip()
     partes = urlsplit(url)
+    # Antes que nada, y sin repetir la dirección en el mensaje: traería la
+    # contraseña y quedaría en la consola y en el log.
+    if partes.username is not None or partes.password is not None:
+        raise ErrorConfig(
+            f'La dirección del sitio no puede llevar usuario ni contraseña: van en {ENV_USUARIO} y {ENV_PASSWORD}.'
+        )
     if partes.scheme not in ('http', 'https') or not partes.netloc:
         raise ErrorConfig(f'La dirección del sitio tiene que empezar con https:// (vino "{url}").')
     return f'{partes.scheme}://{partes.netloc}{partes.path.rstrip("/")}'

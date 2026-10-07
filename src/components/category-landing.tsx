@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Apple, Carrot, ShoppingBasket, Tag } from 'lucide-react';
 import StorefrontPage from '@/components/storefront-page';
 import { DeliveryParagraph, InfoLinks } from '@/components/info-section';
-import { getCachedProducts } from '@/lib/products';
+import { getCachedProducts, toPublicProducts } from '@/lib/products';
 import { getPublicStoreInfo, siteConfig } from '@/lib/site';
 import { getDiscountPercent, isOfferActive } from '@/lib/pricing';
 import { PRODUCT_UNITS, type ProductUnit } from '@/lib/product-units';
@@ -40,7 +40,7 @@ import type { Product } from '@/lib/types';
  */
 export async function getCatalogForRender(): Promise<Product[]> {
   try {
-    return await getCachedProducts();
+    return toPublicProducts(await getCachedProducts());
   } catch (error) {
     console.error('Error al cargar productos para el render del servidor:', error);
     return [];

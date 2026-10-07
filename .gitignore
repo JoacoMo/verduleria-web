@@ -31,6 +31,26 @@ scripts/precios/logs/
 __pycache__/
 *.pyc
 
+# Listas reales del mercado (costos del proveedor): solo van al repo las de ejemplo
+scripts/precios/*.xlsx
+scripts/precios/*.xls
+scripts/precios/*.csv
+scripts/precios/*.ods
+!scripts/precios/lista-mercado-ejemplo.xlsx
+!scripts/precios/lista-mercado-ejemplo.csv
+
+# Cosas que no deberían terminar nunca en un repo público
+*.log
+*.pem
+*.key
+*.p12
+*.dump
+*.sql.gz
+dump*.sql
+backup*.sql
+cookies*.txt
+.DS_Store
+
 # Tests: reportes de cobertura y caché de Vitest
 coverage/
 .vitest/

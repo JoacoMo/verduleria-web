@@ -98,11 +98,21 @@ export function parseStoredOrderItems(value: unknown): OrderItem[] {
   });
 }
 
+/**
+ * Subtotal guardado, salvo en los pedidos que creó la versión anterior mientras
+ * se publicaba esta: la migración les dejó el valor por defecto (0) y en esa
+ * versión el envío no entraba en el total, así que el subtotal es el total.
+ */
+function storedSubtotal(row: Pick<OrderRecordRow, 'subtotal' | 'shippingCost' | 'total'>) {
+  if (row.subtotal > 0 || row.total <= 0) return row.subtotal;
+  return roundMoney(row.total - row.shippingCost);
+}
+
 export function toOrderRecord(row: OrderRecordRow): OrderRecord {
   return {
     id: row.id,
     items: parseStoredOrderItems(row.items),
-    subtotal: row.subtotal,
+    subtotal: storedSubtotal(row),
     shippingCost: row.shippingCost,
     total: row.total,
     status: isOrderStatus(row.status) ? row.status : 'pending',

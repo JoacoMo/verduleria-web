@@ -4,7 +4,7 @@ import { formatProductQuantity } from '@/lib/product-units';
 import { lineTotal } from '@/lib/pricing';
 import { describeSlot } from '@/lib/delivery-slots';
 import { firstName } from './format';
-import { isAwaitingWeights } from './orders-model';
+import { isAwaitingWeights, isShippingChargedApart } from './orders-model';
 
 /**
  * Mensajes de WhatsApp que el dueño le manda al cliente desde el panel.
@@ -50,7 +50,9 @@ export function buildFinalTotalMessage(order: OrderRecord, store: FinalTotalStor
     '',
   ];
 
-  if (isDelivery) {
+  if (isDelivery && isShippingChargedApart(order)) {
+    lines.push(`*${totalName}: ${formatArs(order.total)}* (sin el envío, que se paga aparte)`);
+  } else if (isDelivery) {
     lines.push(`Subtotal: ${formatArs(order.subtotal)}`);
     lines.push(`Envío: ${order.shippingCost > 0 ? formatArs(order.shippingCost) : 'gratis'}`);
     lines.push(`*${totalName}: ${formatArs(order.total)}* (${order.shippingCost > 0 ? 'envío incluido' : 'envío gratis'})`);

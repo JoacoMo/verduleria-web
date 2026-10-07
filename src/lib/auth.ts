@@ -37,8 +37,20 @@ const EXAMPLE_SECRETS = new Set([
   'cambiar-esta-clave',
 ]);
 
+/**
+ * Marcas de los valores de prueba que también están en el repo público (CI y
+ * tests: "ci-jwt-secret-de-prueba-…", "secreto-de-tests-…"). Sirven en CI y en
+ * los tests, pero en producción serían una credencial que cualquiera conoce.
+ */
+const PUBLIC_TEST_MARKERS = ['de-prueba', 'de-tests'];
+
+/** Valor publicado en el repo (de ejemplo, o de prueba si es producción): no sirve como secreto. */
 export function isExampleSecret(value: string) {
-  return EXAMPLE_SECRETS.has(value.trim());
+  const normalized = value.trim();
+  if (EXAMPLE_SECRETS.has(normalized)) return true;
+  if (process.env.VERCEL_ENV !== 'production') return false;
+  const lower = normalized.toLowerCase();
+  return PUBLIC_TEST_MARKERS.some((marker) => lower.includes(marker));
 }
 let shortSecretWarned = false;
 
@@ -48,7 +60,7 @@ function getJwtSecret() {
     throw new Error('JWT_SECRET no está configurado.');
   }
   if (isExampleSecret(secret)) {
-    throw new Error('JWT_SECRET tiene el valor de ejemplo de .env.example. Generá uno nuevo (openssl rand -base64 48) y hacé Redeploy.');
+    throw new Error('JWT_SECRET tiene un valor de ejemplo o de prueba publicado en el repo. Generá uno nuevo (openssl rand -base64 48) y hacé Redeploy.');
   }
 
   // Un secreto corto es más fácil de romper por fuerza bruta, pero cortar el

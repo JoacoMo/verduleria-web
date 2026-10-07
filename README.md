@@ -497,6 +497,7 @@ npm run lint               # ESLint (next/core-web-vitals + next/typescript)
 npm test                   # tests unitarios (Vitest)
 TEST_DATABASE_URL=postgresql://…/elpampa_test npm run test:integration
 npm run build && npm run check:bundle   # ningún secreto en el JavaScript del navegador
+npm run check:pages        # ni en el HTML, el payload RSC o las respuestas de la API (levanta next start)
 python3 -m unittest scripts/test_actualizar_precios.py
 ```
 
@@ -510,8 +511,9 @@ python3 -m unittest scripts/test_actualizar_precios.py
   y migra sola; los tests se niegan a correr contra una base cuyo nombre no diga "test".
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): en cada pull request
   y push corre typecheck, lint, tests (también con otra zona horaria), integración con
-  Postgres 16, build, chequeo de secretos en el bundle, `npm audit` de producción y los
-  tests del script de Python.
+  Postgres 16, build, chequeo de secretos en el bundle y en lo que el servidor manda en
+  cada request (HTML, RSC y API), `npm audit` de producción y los tests del script de
+  Python.
 
 ---
 
@@ -520,9 +522,9 @@ python3 -m unittest scripts/test_actualizar_precios.py
 | Variable | Obligatoria | Descripción |
 |---|:---:|---|
 | `DATABASE_URL` | Sí | Conexión a Postgres. En Supabase, pooler en modo *transaction* con `pgbouncer=true&connection_limit=1`. |
-| `DIRECT_URL` | Sí | Conexión para migraciones. En Supabase, pooler en modo *session*. |
+| `DIRECT_URL` | Sí (en Production) | Conexión para migraciones. En Supabase, pooler en modo *session* (puerto 5432). El build de producción la usa para migrar: sin ella el deploy se corta. |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Sí | Credenciales del panel. Contraseña larga (16+ caracteres). |
-| `JWT_SECRET` | Sí | Secreto para firmar las sesiones (`openssl rand -base64 48`). |
+| `JWT_SECRET` | Sí | Secreto para firmar las sesiones (`openssl rand -base64 48`). Los valores de ejemplo y, en producción, los de prueba del repo se rechazan. |
 | `ADMIN_TOKEN_VERSION` | No | Cambiarla y hacer Redeploy cierra todas las sesiones abiertas. |
 | `CRON_SECRET` | Sí, para la limpieza | Secreto del cron diario (`openssl rand -base64 48`). |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Para imágenes | Subida de imágenes a Storage. La service role key nunca sale del servidor. |
@@ -549,8 +551,16 @@ El proyecto está desplegado en **Vercel** con deploy automático en cada push a
 1. Importar el repositorio en Vercel (preset **Next.js**, comandos por defecto).
    [`vercel.json`](vercel.json) fija la región de las funciones en `gru1` (São Paulo,
    junto a la base) y programa el cron diario de limpieza.
-2. Cargar las variables de entorno de la tabla anterior (incluido `CRON_SECRET`).
-3. Aplicar las migraciones contra la base de producción: `npm run prisma:deploy`.
+2. Cargar las variables de entorno de la tabla anterior en **Production** (incluidos
+   `DIRECT_URL` y `CRON_SECRET`).
+3. Las migraciones se aplican solas: el build de producción corre
+   [`scripts/migrate-on-production.mjs`](scripts/migrate-on-production.mjs)
+   (`prisma migrate deploy` y después una comprobación del esquema,
+   [`scripts/verificar-esquema.sql`](scripts/verificar-esquema.sql)). Si algo falla
+   (falta `DIRECT_URL`, una migración da error o el esquema no es el esperado), el build
+   se corta y queda en línea la versión anterior; el log dice qué pasó y cómo seguir.
+   Los previews no tocan la base. Para ver el estado a mano: `npx prisma migrate status`
+   con las variables de producción.
 4. Recomendado: en **Vercel → Firewall**, una regla de rate limit para
    `/api/gestion/login` y `/api/checkout`. El limitador del código vive en la memoria de
    cada instancia; la regla del firewall es global.

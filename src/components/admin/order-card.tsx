@@ -36,7 +36,7 @@ import { OrderAdjustEditor } from './order-adjust-editor';
 import { InlineAlert } from './notices';
 import type { AdjustedItem } from './order-adjust-model';
 import { clearAdjustDraft, readAdjustDraft } from './adjust-drafts';
-import { hasWeightItems, isAwaitingWeights, isOpenOrder, isPickupForNextDay, orderWeightKg, totalLabel } from './orders-model';
+import { hasWeightItems, isAwaitingWeights, isOpenOrder, isPickupForNextDay, isShippingChargedApart, orderWeightKg, totalLabel } from './orders-model';
 import { describeDate, formatTime, mapsSearchUrl, toArgentinaDate } from './format';
 
 /** Guarda un ajuste de pesos sobre la versión `expectedUpdatedAt`. Devuelve el error a mostrar, o null si se guardó. */
@@ -220,7 +220,12 @@ export function OrderCard({ order, selectedDate, storeInfo, busy, onConfirm, onC
             {isDelivery ? (
               <>
                 <div><dt>Subtotal</dt><dd className="adm-money">{formatArs(order.subtotal)}</dd></div>
-                <div><dt>Envío</dt><dd className="adm-money">{order.shippingCost > 0 ? formatArs(order.shippingCost) : 'Gratis'}</dd></div>
+                <div>
+                  <dt>Envío</dt>
+                  <dd className="adm-money">
+                    {order.shippingCost > 0 ? formatArs(order.shippingCost) : isShippingChargedApart(order) ? 'Aparte' : 'Gratis'}
+                  </dd>
+                </div>
               </>
             ) : null}
             <div className="adm-totals__total">

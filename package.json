@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "check:bundle": "node scripts/check-client-bundle.mjs"
+    "check:bundle": "node scripts/check-client-bundle.mjs",
+    "check:pages": "node scripts/check-rendered-pages.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -46,6 +47,7 @@
   },
   "overrides": {
     "postcss": "^8.5.28",
-    "deepmerge-ts": "^8.0.2"
+    "deepmerge-ts": "^8.0.2",
+    "source-map-js": "^1.2.2"
   }
 }

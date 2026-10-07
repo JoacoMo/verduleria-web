@@ -130,6 +130,12 @@ jobs:
       - name: Secretos fuera del bundle del navegador
         run: npm run check:bundle
 
+      # Lo mismo en lo que el servidor arma en cada request (HTML, payload RSC y
+      # respuestas de la API, también las de error): ahí terminaría una prop o un
+      # mensaje con datos de servidor. Levanta `next start` con estas variables.
+      - name: Secretos fuera de las páginas y la API
+        run: npm run check:pages
+
       - name: Auditoría de dependencias de producción
         run: npm audit --omit=dev --audit-level=high
 

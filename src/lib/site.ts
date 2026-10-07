@@ -1,3 +1,7 @@
+// Solo servidor: lee variables de entorno. Al navegador va el subconjunto
+// público (getPublicStoreInfo) como props; importarlo desde un componente
+// 'use client' rompe el build en vez de arrastrar process.env al bundle.
+import 'server-only';
 import type { StoreInfo } from './types';
 import { STORE_HOURS_TEXT } from './store-hours';
 

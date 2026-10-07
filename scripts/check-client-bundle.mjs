@@ -11,7 +11,8 @@
  * 2. El VALOR de cualquiera de esas variables (y de otras sensibles) tal como
  *    está en process.env al correr el script, si tiene 8 caracteres o más
  *    (más corto daría falsos positivos: "admin", "1").
- * 3. Una cadena de conexión de Postgres con usuario y contraseña.
+ * 3. Una cadena de conexión de Postgres con usuario y contraseña, un JWT o una
+ *    clave secreta de Supabase (patrones en scripts/secret-scan.mjs).
  *
  * Uso:
  *   node scripts/check-client-bundle.mjs              # revisa .next/static
@@ -26,26 +27,7 @@
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
-
-/** Variables que solo existen en el servidor: su nombre no puede aparecer en el navegador. */
-const SERVER_ONLY_VARS = [
-  'JWT_SECRET',
-  'ADMIN_PASSWORD',
-  'ADMIN_USERNAME',
-  'SUPABASE_SERVICE_ROLE_KEY',
-  'DATABASE_URL',
-  'DIRECT_URL',
-  'CRON_SECRET',
-  'ADMIN_TOKEN_VERSION',
-];
-
-/** Además de las de arriba, variables cuyo VALOR tampoco puede viajar al navegador. */
-const EXTRA_SECRET_VALUE_VARS = ['PEXELS_API_KEY', 'MP_ACCESS_TOKEN', 'MP_WEBHOOK_SECRET'];
-
-const MIN_SECRET_LENGTH = 8;
-
-/** postgres://usuario:contraseña@host (o postgresql://). */
-const POSTGRES_URL_WITH_PASSWORD = /postgres(?:ql)?:\/\/[^\s"'`/:@]+:[^\s"'`@]+@/i;
+import { SERVER_ONLY_VARS, createSecretScanner } from './secret-scan.mjs';
 
 const root = resolve(process.cwd(), process.argv[2] ?? '.next/static');
 
@@ -61,24 +43,6 @@ async function listJsFiles(dir) {
   return nested.flat();
 }
 
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Formas en las que un string puede quedar escrito dentro de un .js. */
-function encodedForms(value) {
-  const jsonEscaped = JSON.stringify(value).slice(1, -1);
-  return [...new Set([value, jsonEscaped, encodeURIComponent(value)])];
-}
-
-function secretValues() {
-  return [...SERVER_ONLY_VARS, ...EXTRA_SECRET_VALUE_VARS].flatMap((name) => {
-    const value = process.env[name];
-    if (!value || value.length < MIN_SECRET_LENGTH) return [];
-    return [{ name, forms: encodedForms(value) }];
-  });
-}
-
 async function main() {
   if (!existsSync(root)) {
     console.error(`No existe ${relative(process.cwd(), root) || root}: corré \`next build\` antes de revisar el bundle.`);
@@ -91,26 +55,16 @@ async function main() {
     process.exit(2);
   }
 
-  const namePatterns = SERVER_ONLY_VARS.map((name) => ({ name, pattern: new RegExp(`\\b${escapeRegExp(name)}\\b`) }));
-  const values = secretValues();
+  const scanner = createSecretScanner();
   const findings = [];
 
   for (const file of files) {
     const content = await readFile(file, 'utf8');
     const where = relative(process.cwd(), file);
-
-    for (const { name, pattern } of namePatterns) {
-      if (pattern.test(content)) findings.push(`${where}: aparece el nombre de la variable de servidor ${name}`);
-    }
-    for (const { name, forms } of values) {
-      if (forms.some((form) => content.includes(form))) findings.push(`${where}: aparece el VALOR de ${name}`);
-    }
-    if (POSTGRES_URL_WITH_PASSWORD.test(content)) {
-      findings.push(`${where}: aparece una URL de Postgres con usuario y contraseña`);
-    }
+    for (const problem of scanner.scan(content)) findings.push(`${where}: ${problem}`);
   }
 
-  const checkedValues = values.map((value) => value.name);
+  const checkedValues = scanner.valueNames;
   console.log(
     `Bundle del navegador: ${files.length} archivos .js revisados en ${relative(process.cwd(), root)}. ` +
       `Nombres buscados: ${SERVER_ONLY_VARS.length}. ` +

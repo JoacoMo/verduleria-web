@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { enforceRateLimit } from '@/lib/rate-limit';
-import { getCachedProducts } from '@/lib/products';
+import { getCachedProducts, toPublicProducts } from '@/lib/products';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   try {
     const products = await getCachedProducts();
     // createdAt no le sirve a nadie afuera: se responde solo lo que se muestra.
-    return NextResponse.json(products.map(({ createdAt: _createdAt, ...product }) => product));
+    return NextResponse.json(toPublicProducts(products));
   } catch (error) {
     console.error('Error en GET /api/products:', error);
     return NextResponse.json({ error: 'No se pudo cargar el catálogo. Probá de nuevo en un rato.' }, { status: 500 });

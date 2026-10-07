@@ -102,6 +102,13 @@ describe('toOrderRecord', () => {
       adjustedAt: null,
     });
   });
+
+  it('un pedido de la versión anterior con subtotal 0 (valor por defecto de la migración) toma el total', () => {
+    expect(toOrderRecord(row({ subtotal: 0, shippingCost: 0, total: 13500 })).subtotal).toBe(13500);
+    // Uno de verdad en 0 (sin ítems cobrables) sigue en 0, y uno normal no cambia.
+    expect(toOrderRecord(row({ subtotal: 0, total: 0 })).subtotal).toBe(0);
+    expect(toOrderRecord(row({ subtotal: 9000, shippingCost: 4000, total: 13000 })).subtotal).toBe(9000);
+  });
 });
 
 describe('slotFromId', () => {

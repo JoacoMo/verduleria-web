@@ -63,6 +63,14 @@ async function fetchProductsFromDb(): Promise<Product[]> {
   return products.map(toProduct).sort(compareProducts);
 }
 
+/**
+ * Lo que se le manda al navegador (props del render y /api/products): sin
+ * createdAt, que no se muestra en ningún lado.
+ */
+export function toPublicProducts(products: Product[]): Product[] {
+  return products.map(({ createdAt: _createdAt, ...product }) => product);
+}
+
 export const getCachedProducts = unstable_cache(
   fetchProductsFromDb,
   ['productos-listado'],

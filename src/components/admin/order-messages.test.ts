@@ -70,6 +70,15 @@ describe('buildFinalTotalMessage', () => {
     ]);
   });
 
+  it('un envío de antes (sin medio de pago guardado) no dice "envío gratis": se cobraba aparte', () => {
+    const text = buildFinalTotalMessage(order({ paymentMethod: null, shippingCost: 0, subtotal: 2880, total: 2880 }), STORE);
+    expect(text).toContain(`*Total final: ${formatArs(2880)}* (sin el envío, que se paga aparte)`);
+    expect(text).not.toMatch(/gratis/i);
+    expect(text).not.toContain('Subtotal');
+    // Sin medio de pago se toma como transferencia, como antes.
+    expect(text).toContain('Alias: el.pampa.verdu');
+  });
+
   it('en efectivo con retiro no manda alias y dice que paga al retirar', () => {
     const text = buildFinalTotalMessage(order({ deliveryMethod: 'pickup', paymentMethod: 'cash', shippingCost: 0, total: 2880, deliverySlot: null }), STORE);
     expect(text).toContain(`*Total final: ${formatArs(2880)}*`);

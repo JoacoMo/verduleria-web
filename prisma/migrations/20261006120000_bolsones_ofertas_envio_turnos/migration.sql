@@ -25,12 +25,14 @@ UPDATE "public"."Order" SET "subtotal" = "total";
 -- el deploy. El CHECK da la misma garantía (la base rechaza cualquier otro
 -- valor) sin cambiar el tipo, así que es compatible con las dos versiones.
 DO $$
+DECLARE
+  inesperados text;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM "public"."Order"
-    WHERE "status" NOT IN ('pending', 'paid', 'cancelled', 'failed')
-  ) THEN
-    RAISE EXCEPTION 'Hay pedidos con un estado distinto de pending/paid/cancelled/failed: corregilos antes de migrar.';
+  SELECT string_agg(DISTINCT "status", ', ') INTO inesperados
+  FROM "public"."Order"
+  WHERE "status" NOT IN ('pending', 'paid', 'cancelled', 'failed');
+  IF inesperados IS NOT NULL THEN
+    RAISE EXCEPTION 'Hay pedidos con estados que no son pending/paid/cancelled/failed (%): corregilos antes de migrar.', inesperados;
   END IF;
 END $$;
 

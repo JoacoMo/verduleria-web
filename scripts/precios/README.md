@@ -72,7 +72,8 @@ Todos los comandos se escriben en la terminal, parado en la carpeta del proyecto
 
 Guardá el Excel o CSV del mercado dentro de `scripts/precios/`, por ejemplo como
 `scripts/precios/lista-lunes.xlsx`. (Puede estar en cualquier carpeta; es solo para
-tenerlo a mano.)
+tenerlo a mano.) Las listas que guardes ahí no se suben a GitHub (están en el
+`.gitignore`): son los costos del proveedor y el repo es público.
 
 ### Paso 2: simular
 

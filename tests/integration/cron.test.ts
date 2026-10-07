@@ -72,6 +72,9 @@ describeDb('GET /api/cron/limpiar-pedidos: limpieza en una fecha simulada', () =
       // Se cancelan: transferencia (o sin medio de pago, pedidos viejos) sin pesar.
       transferOld: await createOrder({ status: 'pending', paymentMethod: 'transfer', ...at(8) }),
       legacyNoMethod: await createOrder({ status: 'pending', paymentMethod: null, ...at(8) }),
+      // Con link de Mercado Pago (época anterior): pudo pagarse sin que llegue el aviso.
+      mercadoPagoOld: await createOrder({ status: 'pending', paymentMethod: null, mpPreferenceId: 'pref-vieja', ...at(30) }),
+      mercadoPagoFailed: await createOrder({ status: 'failed', paymentMethod: null, mpPreferenceId: 'pref-fallida', ...at(30) }),
       failedOld: await createOrder({ status: 'failed', paymentMethod: 'transfer', ...at(10) }),
       // Un pendiente de hace 120 días se cancela, pero NO se borra en la misma corrida.
       pendingAncient: await createOrder({ status: 'pending', ...at(120) }),
@@ -115,6 +118,8 @@ describeDb('GET /api/cron/limpiar-pedidos: limpieza en una fecha simulada', () =
     expect(await states()).toEqual({
       transferOld: 'cancelled',
       legacyNoMethod: 'cancelled',
+      mercadoPagoOld: 'pending',
+      mercadoPagoFailed: 'failed',
       failedOld: 'cancelled',
       pendingAncient: 'cancelled',
       pendingEdge: 'pending',
@@ -147,6 +152,8 @@ describeDb('GET /api/cron/limpiar-pedidos: limpieza en una fecha simulada', () =
     expect(await states()).toEqual({
       transferOld: 'borrado',
       legacyNoMethod: 'borrado',
+      mercadoPagoOld: 'pending',
+      mercadoPagoFailed: 'failed',
       failedOld: 'borrado',
       pendingAncient: 'borrado',
       pendingEdge: 'cancelled',

@@ -5,6 +5,7 @@ import {
   ADMIN_SESSION_SECONDS,
   clearAdminSessionCookie,
   createAdminToken,
+  isExampleSecret,
   safeCompare,
   setAdminSessionCookie,
   verifyAdminAuth,
@@ -175,6 +176,27 @@ describe('verifyAdminAuth', () => {
     const example = verifyAdminAuth(withToken(token));
     expect(example.ok).toBe(false);
     if (!example.ok) expect(example.response.status).toBe(500);
+  });
+
+  it('en producción también se rechazan los valores de prueba que están en el repo (CI y tests)', async () => {
+    const token = createAdminToken();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const value of ['ci-jwt-secret-de-prueba-0123456789-abcdefghij', 'secreto-de-tests-con-mas-de-32-caracteres-para-jwt']) {
+      // Fuera de producción (CI, tests, previews) siguen sirviendo.
+      expect(isExampleSecret(value)).toBe(false);
+      vi.stubEnv('VERCEL_ENV', 'production');
+      expect(isExampleSecret(value)).toBe(true);
+      expect(isExampleSecret(value.toUpperCase())).toBe(true);
+      vi.stubEnv('JWT_SECRET', value);
+      const result = verifyAdminAuth(withToken(token));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(500);
+      vi.unstubAllEnvs();
+    }
+    // Un secreto real (aleatorio) no se confunde.
+    vi.stubEnv('VERCEL_ENV', 'production');
+    expect(isExampleSecret('Yq3v0Zt8pX1mN6rL2kB9wH4cJ7dF5gS0')).toBe(false);
+    expect(isExampleSecret('cambiar-esta-clave')).toBe(true);
   });
 
   it('un token sin exp firmado con el secreto real igual vence a las 12 h (maxAge)', () => {

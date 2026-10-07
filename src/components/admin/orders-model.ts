@@ -29,6 +29,15 @@ export function isAwaitingWeights(order: Pick<OrderRecord, 'items' | 'adjustedAt
 }
 
 /**
+ * Envío de un pedido hecho antes de que el envío entrara en el total (sin medio
+ * de pago guardado): en esa versión se cobraba aparte, así que no se puede
+ * decir que fue gratis.
+ */
+export function isShippingChargedApart(order: Pick<OrderRecord, 'deliveryMethod' | 'paymentMethod' | 'shippingCost'>) {
+  return order.deliveryMethod === 'delivery' && order.paymentMethod === null && order.shippingCost <= 0;
+}
+
+/**
  * Cómo se llama el total de un pedido:
  * - "Total final" si el dueño ya cargó los pesos reales.
  * - "Total estimado" si tiene cosas por peso y todavía no se pesó.

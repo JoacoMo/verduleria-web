@@ -921,6 +921,13 @@ class TestHttp(Base):
             ap.ClienteApi('elpampa.vercel.app')
         self.assertEqual(ap.normalizar_url('https://elpampa.vercel.app/'), 'https://elpampa.vercel.app')
 
+    def test_url_con_usuario_y_clave_se_rechaza_sin_repetirla(self):
+        for url in ('https://admin:clave-secreta@elpampa.vercel.app', 'ftp://admin:clave-secreta@x', 'https://admin@elpampa.vercel.app'):
+            with self.assertRaises(ap.ErrorConfig) as error:
+                ap.normalizar_url(url)
+            self.assertNotIn('clave-secreta', str(error.exception))
+            self.assertIn(ap.ENV_PASSWORD, str(error.exception))
+
 
 class TestAplicar(Base):
     def plan_con(self, cantidad):

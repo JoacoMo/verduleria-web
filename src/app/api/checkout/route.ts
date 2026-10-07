@@ -132,6 +132,7 @@ function badRequest(message: string) {
 
 const PATH = '/api/checkout';
 const TOO_MANY_ORDERS_MESSAGE = 'Estás haciendo muchos pedidos seguidos. Esperá unos minutos.';
+const OUTDATED_PAGE_MESSAGE = 'La tienda se actualizó mientras tenías la página abierta. Recargá la página y volvé a armar el pedido: todavía no se registró nada.';
 
 /**
  * Topes de pedidos contados en la base (ver ORDER_CAPS): por teléfono y de toda
@@ -211,6 +212,13 @@ export async function POST(request: Request) {
     const existing = await prisma.order.findUnique({ where: { idempotencyKey }, select: EXISTING_ORDER_SELECT });
     if (existing) {
       return responseForExisting(existing, now);
+    }
+
+    // Pestaña abierta desde antes de que se actualizara la tienda: manda el
+    // pedido con el formato viejo, sin datos del cliente. En vez de pedirle un
+    // nombre que su formulario no tiene, se le pide que recargue.
+    if (body.customer === undefined) {
+      return NextResponse.json({ error: OUTDATED_PAGE_MESSAGE }, { status: 400 });
     }
 
     // ---- 2. Datos del cliente, entrega y pago ----

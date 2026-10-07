@@ -43,7 +43,7 @@ export async function GET(request: Request) {
 
   const secret = process.env.CRON_SECRET;
   if (!secret || isExampleSecret(secret)) {
-    console.error(`Error en GET ${PATH}: falta CRON_SECRET o tiene el valor de ejemplo de .env.example, no se corre la limpieza.`);
+    console.error(`Error en GET ${PATH}: falta CRON_SECRET o tiene un valor de ejemplo o de prueba publicado en el repo; no se corre la limpieza.`);
     return NextResponse.json({ error: 'La limpieza no está configurada.' }, { status: 500 });
   }
 
@@ -75,6 +75,10 @@ export async function GET(request: Request) {
           // En efectivo: se cobra en la puerta o en el mostrador. Sin medio de
           // pago (pedidos de antes de que se guardara) se toma como transferencia.
           OR: [{ paymentMethod: null }, { paymentMethod: { not: 'cash' } }],
+          // Con link de Mercado Pago (de cuando se cobraba por ahí): el cliente
+          // pudo pagar aunque el pedido figure abierto, porque ya no llega el
+          // aviso de MP. Esos los revisa y cierra el dueño a mano.
+          mpPreferenceId: null,
         },
         // updatedAt explícito: desde acá se cuentan los 90 días hasta el borrado.
         data: { status: 'cancelled', updatedAt: now },
